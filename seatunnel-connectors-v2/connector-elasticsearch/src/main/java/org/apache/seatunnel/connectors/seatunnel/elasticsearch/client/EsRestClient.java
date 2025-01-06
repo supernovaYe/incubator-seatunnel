@@ -225,13 +225,16 @@ public class EsRestClient implements Closeable {
                 throw new ElasticsearchConnectorException(
                         ElasticsearchConnectorErrorCode.BULK_RESPONSE_ERROR,
                         String.format(
-                                "bulk es response status code=%d,request boy=%s",
-                                response.getStatusLine().getStatusCode(), requestBody));
+                                "bulk es response status=%s,request body(truncate)=%s",
+                                response,
+                                requestBody.substring(0, Math.min(1000, requestBody.length()))));
             }
         } catch (IOException e) {
             throw new ElasticsearchConnectorException(
                     ElasticsearchConnectorErrorCode.BULK_RESPONSE_ERROR,
-                    String.format("bulk es error,request boy=%s", requestBody),
+                    String.format(
+                            "bulk es error,request body(truncate)=%s",
+                            requestBody.substring(0, Math.min(1000, requestBody.length()))),
                     e);
         }
     }
@@ -332,13 +335,13 @@ public class EsRestClient implements Closeable {
                 throw new ElasticsearchConnectorException(
                         ElasticsearchConnectorErrorCode.SCROLL_REQUEST_ERROR,
                         String.format(
-                                "POST %s response status code=%d,request boy=%s",
+                                "POST %s response status code=%d,request body=%s",
                                 endpoint, response.getStatusLine().getStatusCode(), requestBody));
             }
         } catch (IOException e) {
             throw new ElasticsearchConnectorException(
                     ElasticsearchConnectorErrorCode.SCROLL_REQUEST_ERROR,
-                    String.format("POST %s error,request boy=%s", endpoint, requestBody),
+                    String.format("POST %s error,request body=%s", endpoint, requestBody),
                     e);
         }
     }
@@ -385,7 +388,7 @@ public class EsRestClient implements Closeable {
      * @return true or false
      */
     public boolean checkIndexExist(String index) {
-        Request request = new Request("HEAD", "/" + index);
+        Request request = new Request("HEAD", "/" + index.toLowerCase());
         try {
             Response response = restClient.performRequest(request);
             int statusCode = response.getStatusLine().getStatusCode();
@@ -397,7 +400,9 @@ public class EsRestClient implements Closeable {
     }
 
     public List<IndexDocsCount> getIndexDocsCount(String index) {
-        String endpoint = String.format("/_cat/indices/%s?h=index,docsCount&format=json", index);
+        String endpoint =
+                String.format(
+                        "/_cat/indices/%s?h=index,docsCount&format=json", index.toLowerCase());
         Request request = new Request("GET", endpoint);
         try {
             Response response = restClient.performRequest(request);
@@ -455,7 +460,7 @@ public class EsRestClient implements Closeable {
     }
 
     public void createIndex(String indexName, String mapping) {
-        String endpoint = String.format("/%s", indexName);
+        String endpoint = String.format("/%s", indexName.toLowerCase());
         Request request = new Request("PUT", endpoint);
         if (StringUtils.isNotEmpty(mapping)) {
             request.setJsonEntity(mapping);
@@ -481,7 +486,7 @@ public class EsRestClient implements Closeable {
     }
 
     public void dropIndex(String tableName) {
-        String endpoint = String.format("/%s", tableName);
+        String endpoint = String.format("/%s", tableName.toLowerCase());
         Request request = new Request("DELETE", endpoint);
         try {
             Response response = restClient.performRequest(request);
@@ -507,7 +512,7 @@ public class EsRestClient implements Closeable {
     }
 
     public void clearIndexData(String indexName) {
-        String endpoint = String.format("/%s/_delete_by_query", indexName);
+        String endpoint = String.format("/%s/_delete_by_query", indexName.toLowerCase());
         Request request = new Request("POST", endpoint);
         String jsonString = "{ \"query\": { \"match_all\": {} } }";
         request.setJsonEntity(jsonString);

@@ -33,8 +33,6 @@ source {
         # include schema into kafka message
         key.converter.schemas.enable = false
         value.converter.schemas.enable = false
-        # include ddl
-        include.schema.changes = true
         # topic prefix
         database.server.name =  "mysql_cdc_1"
     }
@@ -46,6 +44,7 @@ sink {
     plugin_input = "table1"
 
     bootstrap.servers = "localhost:9092"
+    topic = "${topic}"
 
     # compatible_debezium_json options
     format = compatible_debezium_json
