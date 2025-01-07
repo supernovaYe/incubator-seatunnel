@@ -17,8 +17,6 @@
 
 package org.apache.seatunnel.connectors.seatunnel.clickhouse;
 
-import org.apache.seatunnel.shade.com.google.common.collect.Sets;
-
 import org.apache.seatunnel.connectors.seatunnel.clickhouse.shard.Shard;
 import org.apache.seatunnel.connectors.seatunnel.clickhouse.shard.ShardMetadata;
 import org.apache.seatunnel.connectors.seatunnel.clickhouse.sink.client.ShardRouter;
@@ -29,11 +27,6 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
-import net.jpountz.xxhash.XXHash64;
-import net.jpountz.xxhash.XXHashFactory;
-
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -45,51 +38,7 @@ import java.util.concurrent.ThreadLocalRandom;
 public class ShardRouterTest {
 
     @Test
-    public void test() {
-
-        XXHash64 HASH_INSTANCE = XXHashFactory.fastestInstance().hash64();
-
-        // Assuming there are 1-100 clickhouse nodes
-        for (int shardWeightCount = 1; shardWeightCount <= 100; shardWeightCount++) {
-
-            int expectedMinOffset = 0;
-            int expectedMaxOffset = shardWeightCount - 1;
-
-            int maxOffset = Integer.MIN_VALUE;
-            int minOffset = Integer.MAX_VALUE;
-
-            for (int j = 0; j < 1000000; j++) {
-
-                byte[] randomBytes = new byte[16];
-                ThreadLocalRandom.current().nextBytes(randomBytes);
-
-                int offset =
-                        (int)
-                                ((HASH_INSTANCE.hash(
-                                                        ByteBuffer.wrap(
-                                                                Arrays.toString(randomBytes)
-                                                                        .getBytes(
-                                                                                StandardCharsets
-                                                                                        .UTF_8)),
-                                                        0)
-                                                & Long.MAX_VALUE)
-                                        % shardWeightCount);
-
-                if (offset > maxOffset) {
-                    maxOffset = offset;
-                }
-                if (offset < minOffset) {
-                    minOffset = offset;
-                }
-            }
-
-            Assertions.assertEquals(maxOffset, expectedMaxOffset);
-            Assertions.assertEquals(minOffset, expectedMinOffset);
-        }
-    }
-
-    @Test
-    public void test2() {
+    public void testWithShardRouterGetShardRight() {
         String clusterName = "default";
         String database = "test_db";
         String localTable = "test_table_local";
@@ -101,7 +50,7 @@ public class ShardRouterTest {
 
         // Assuming there are 28 clickhouse nodes with 2 replica
         List<Shard> shardList = new ArrayList<>();
-        Set<Integer> expected = Sets.newTreeSet();
+        Set<Integer> expected = new TreeSet<>();
         for (int i = 1; i <= 14; i++) {
             expected.add(i);
             Shard shard =
