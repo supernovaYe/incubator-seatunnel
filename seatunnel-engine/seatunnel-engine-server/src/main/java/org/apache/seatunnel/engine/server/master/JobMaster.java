@@ -27,6 +27,7 @@ import org.apache.seatunnel.api.sink.SaveModeHandler;
 import org.apache.seatunnel.api.sink.SeaTunnelSink;
 import org.apache.seatunnel.api.sink.SupportSaveMode;
 import org.apache.seatunnel.api.sink.multitablesink.MultiTableSink;
+import org.apache.seatunnel.api.table.catalog.TablePath;
 import org.apache.seatunnel.common.exception.SeaTunnelRuntimeException;
 import org.apache.seatunnel.common.utils.ExceptionUtils;
 import org.apache.seatunnel.common.utils.RetryUtils;
@@ -40,6 +41,7 @@ import org.apache.seatunnel.engine.common.config.server.CheckpointStorageConfig;
 import org.apache.seatunnel.engine.common.exception.SeaTunnelEngineException;
 import org.apache.seatunnel.engine.common.utils.ExceptionUtil;
 import org.apache.seatunnel.engine.common.utils.PassiveCompletableFuture;
+import org.apache.seatunnel.engine.common.utils.concurrent.CompletableFuture;
 import org.apache.seatunnel.engine.core.dag.actions.SinkAction;
 import org.apache.seatunnel.engine.core.dag.logical.LogicalDag;
 import org.apache.seatunnel.engine.core.dag.logical.LogicalVertex;
@@ -66,7 +68,11 @@ import org.apache.seatunnel.engine.server.execution.TaskGroupLocation;
 import org.apache.seatunnel.engine.server.execution.TaskLocation;
 import org.apache.seatunnel.engine.server.metrics.JobMetricsUtil;
 import org.apache.seatunnel.engine.server.metrics.SeaTunnelMetricsContext;
+import org.apache.seatunnel.engine.server.resourcemanager.AbstractResourceManager;
 import org.apache.seatunnel.engine.server.resourcemanager.ResourceManager;
+import org.apache.seatunnel.engine.server.resourcemanager.allocation.strategy.SlotAllocationStrategy;
+import org.apache.seatunnel.engine.server.resourcemanager.allocation.strategy.SlotRatioStrategy;
+import org.apache.seatunnel.engine.server.resourcemanager.allocation.strategy.SystemLoadStrategy;
 import org.apache.seatunnel.engine.server.resourcemanager.resource.SlotProfile;
 import org.apache.seatunnel.engine.server.task.operation.CleanTaskGroupContextOperation;
 import org.apache.seatunnel.engine.server.task.operation.GetTaskGroupMetricsOperation;
@@ -96,7 +102,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -372,6 +377,24 @@ public class JobMaster {
      */
     public boolean preApplyResources(SubPlan subPlan) {
 
+        // When starting to apply for task resources, reset the worker's slot allocation information
+        // Mainly used in two scenarios:
+        // 1. When based on the SYSTEM_LOAD strategy, the system load cannot change dynamically, and
+        // the resources used by each slot need to be calculated and inferred
+        // 2. When based on the SLOT_RATIO strategy, registerWorker is not updated in real time, and
+        // is used to record the slot application status
+        //        ((AbstractResourceManager) resourceManager)
+        //                .setWorkerAssignedSlots(new ConcurrentHashMap<>());
+        SlotAllocationStrategy slotAllocationStrategy =
+                ((AbstractResourceManager) resourceManager).getSlotAllocationStrategy();
+        if (slotAllocationStrategy instanceof SlotRatioStrategy) {
+            ((SlotRatioStrategy) slotAllocationStrategy)
+                    .setWorkerAssignedSlots(new ConcurrentHashMap<>());
+        } else if (slotAllocationStrategy instanceof SystemLoadStrategy) {
+            ((SystemLoadStrategy) slotAllocationStrategy)
+                    .setWorkerAssignedSlots(new ConcurrentHashMap<>());
+        }
+
         Map<TaskGroupLocation, CompletableFuture<SlotProfile>> preApplyResourceFutures =
                 new HashMap<>();
 
@@ -469,6 +492,7 @@ public class JobMaster {
     private void preApplyResourcesForSubPlan(
             SubPlan subPlan,
             Map<TaskGroupLocation, CompletableFuture<SlotProfile>> preApplyResourceFutures) {
+
         Map<TaskGroupLocation, CompletableFuture<SlotProfile>> coordinatorFutures = new HashMap<>();
         subPlan.getCoordinatorVertexList()
                 .forEach(
@@ -489,6 +513,7 @@ public class JobMaster {
 
         preApplyResourceFutures.putAll(coordinatorFutures);
         preApplyResourceFutures.putAll(taskFutures);
+        LOGGER.fine("preApplyResourceFutures size: " + preApplyResourceFutures.size());
     }
 
     public void run() {
@@ -527,7 +552,7 @@ public class JobMaster {
                 }
             }
         } else if (sink instanceof MultiTableSink) {
-            Map<String, SeaTunnelSink> sinks = ((MultiTableSink) sink).getSinks();
+            Map<TablePath, SeaTunnelSink> sinks = ((MultiTableSink) sink).getSinks();
             for (SeaTunnelSink seaTunnelSink : sinks.values()) {
                 handleSaveMode(seaTunnelSink);
             }
