@@ -17,14 +17,16 @@
 
 package org.apache.seatunnel.connectors.seatunnel.iceberg.source.enumerator;
 
+import org.apache.seatunnel.shade.com.google.common.annotations.VisibleForTesting;
+import org.apache.seatunnel.shade.org.apache.commons.lang3.tuple.Pair;
+
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.catalog.TablePath;
-import org.apache.seatunnel.connectors.seatunnel.iceberg.config.SourceConfig;
+import org.apache.seatunnel.connectors.seatunnel.iceberg.config.IcebergSourceConfig;
 import org.apache.seatunnel.connectors.seatunnel.iceberg.source.enumerator.scan.IcebergScanContext;
 import org.apache.seatunnel.connectors.seatunnel.iceberg.source.enumerator.scan.IcebergScanSplitPlanner;
 import org.apache.seatunnel.connectors.seatunnel.iceberg.source.split.IcebergFileScanTaskSplit;
 
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 
@@ -45,11 +47,12 @@ import java.util.concurrent.ConcurrentMap;
 public class IcebergStreamSplitEnumerator extends AbstractSplitEnumerator {
 
     private final ConcurrentMap<TablePath, IcebergEnumeratorPosition> tableOffsets;
-    private volatile boolean initialized = false;
+
+    @VisibleForTesting volatile boolean initialized = false;
 
     public IcebergStreamSplitEnumerator(
             Context<IcebergFileScanTaskSplit> context,
-            SourceConfig sourceConfig,
+            IcebergSourceConfig sourceConfig,
             Map<TablePath, CatalogTable> catalogTables,
             Map<TablePath, Pair<Schema, Schema>> tableSchemaProjections) {
         this(context, sourceConfig, catalogTables, tableSchemaProjections, null);
@@ -57,7 +60,7 @@ public class IcebergStreamSplitEnumerator extends AbstractSplitEnumerator {
 
     public IcebergStreamSplitEnumerator(
             Context<IcebergFileScanTaskSplit> context,
-            SourceConfig sourceConfig,
+            IcebergSourceConfig sourceConfig,
             Map<TablePath, CatalogTable> catalogTables,
             Map<TablePath, Pair<Schema, Schema>> tableSchemaProjections,
             IcebergSplitEnumeratorState state) {
@@ -78,9 +81,9 @@ public class IcebergStreamSplitEnumerator extends AbstractSplitEnumerator {
         Set<Integer> readers = context.registeredReaders();
         while (true) {
             for (TablePath tablePath : pendingTables) {
-                checkThrowInterruptedException();
-
                 synchronized (stateLock) {
+                    checkThrowInterruptedException();
+
                     log.info("Scan table {}.", tablePath);
 
                     Collection<IcebergFileScanTaskSplit> splits = loadSplits(tablePath);
@@ -94,7 +97,9 @@ public class IcebergStreamSplitEnumerator extends AbstractSplitEnumerator {
                 initialized = true;
             }
 
-            stateLock.wait(sourceConfig.getIncrementScanInterval());
+            synchronized (stateLock) {
+                stateLock.wait(sourceConfig.getIncrementScanInterval());
+            }
         }
     }
 
@@ -111,7 +116,9 @@ public class IcebergStreamSplitEnumerator extends AbstractSplitEnumerator {
     @Override
     public void handleSplitRequest(int subtaskId) {
         if (initialized) {
-            stateLock.notifyAll();
+            synchronized (stateLock) {
+                stateLock.notifyAll();
+            }
         }
     }
 

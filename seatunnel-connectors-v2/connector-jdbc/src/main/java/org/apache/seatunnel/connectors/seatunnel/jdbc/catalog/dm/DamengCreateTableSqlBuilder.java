@@ -17,6 +17,8 @@
 
 package org.apache.seatunnel.connectors.seatunnel.jdbc.catalog.dm;
 
+import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
+
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.catalog.Column;
 import org.apache.seatunnel.api.table.catalog.ConstraintKey;
@@ -28,7 +30,6 @@ import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.DatabaseI
 import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.dm.DmdbTypeConverter;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.lang3.StringUtils;
 
 import java.util.List;
 import java.util.UUID;
@@ -108,14 +109,19 @@ public class DamengCreateTableSqlBuilder extends AbstractJdbcCreateTableSqlBuild
         return createTableSql.toString();
     }
 
-    private String buildColumnSql(Column column) {
+    String buildColumnSql(Column column) {
         StringBuilder columnSql = new StringBuilder();
         columnSql.append("\"").append(column.getName()).append("\" ");
 
-        String columnType =
-                StringUtils.equals(DatabaseIdentifier.DAMENG, sourceCatalogName)
-                        ? column.getSourceType()
-                        : DmdbTypeConverter.INSTANCE.reconvert(column).getColumnType();
+        String columnType;
+        if (column.getSinkType() != null) {
+            columnType = column.getSinkType();
+        } else if (StringUtils.equals(DatabaseIdentifier.DAMENG, sourceCatalogName)
+                && StringUtils.isNotEmpty(column.getSourceType())) {
+            columnType = column.getSourceType();
+        } else {
+            columnType = DmdbTypeConverter.INSTANCE.reconvert(column).getColumnType();
+        }
         columnSql.append(columnType);
 
         if (!column.isNullable()) {

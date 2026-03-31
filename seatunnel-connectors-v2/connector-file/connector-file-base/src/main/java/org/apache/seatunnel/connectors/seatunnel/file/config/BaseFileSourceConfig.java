@@ -18,12 +18,11 @@
 package org.apache.seatunnel.connectors.seatunnel.file.config;
 
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
+import org.apache.seatunnel.api.options.ConnectorCommonOptions;
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
-import org.apache.seatunnel.api.table.catalog.CatalogTableUtil;
 import org.apache.seatunnel.api.table.catalog.Column;
 import org.apache.seatunnel.api.table.catalog.PhysicalColumn;
 import org.apache.seatunnel.api.table.catalog.TableSchema;
-import org.apache.seatunnel.api.table.catalog.schema.TableSchemaOptions;
 import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
 import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
 import org.apache.seatunnel.connectors.seatunnel.file.exception.FileConnectorErrorCode;
@@ -52,24 +51,26 @@ public abstract class BaseFileSourceConfig implements Serializable {
     private final ReadStrategy readStrategy;
     private final List<String> filePaths;
     private final ReadonlyConfig baseFileSourceConfig;
+    private final CatalogTable catalogTableFromConfig;
 
     public abstract HadoopConf getHadoopConfig();
 
     public abstract String getPluginName();
 
-    public BaseFileSourceConfig(ReadonlyConfig readonlyConfig) {
+    public BaseFileSourceConfig(
+            ReadonlyConfig readonlyConfig, CatalogTable catalogTableFromConfig) {
         this.baseFileSourceConfig = readonlyConfig;
-        this.fileFormat = readonlyConfig.get(BaseSourceConfigOptions.FILE_FORMAT_TYPE);
+        this.fileFormat = readonlyConfig.get(FileBaseSourceOptions.FILE_FORMAT_TYPE);
         this.readStrategy = ReadStrategyFactory.of(readonlyConfig, getHadoopConfig());
         this.filePaths = parseFilePaths(readonlyConfig);
-
+        this.catalogTableFromConfig = catalogTableFromConfig;
         this.catalogTable = parseCatalogTable(readonlyConfig);
     }
 
     private List<String> parseFilePaths(ReadonlyConfig readonlyConfig) {
         String rootPath = null;
         try {
-            rootPath = readonlyConfig.get(BaseSourceConfigOptions.FILE_PATH);
+            rootPath = readonlyConfig.get(FileBaseSourceOptions.FILE_PATH);
             return readStrategy.getFileNamesByPath(rootPath);
         } catch (Exception ex) {
             String errorMsg = String.format("Get file list from this path [%s] failed", rootPath);
@@ -79,14 +80,17 @@ public abstract class BaseFileSourceConfig implements Serializable {
     }
 
     private CatalogTable parseCatalogTable(ReadonlyConfig readonlyConfig) {
-        final CatalogTable catalogTable;
-        boolean configSchema = readonlyConfig.getOptional(TableSchemaOptions.SCHEMA).isPresent();
-        if (configSchema) {
-            catalogTable = CatalogTableUtil.buildWithConfig(getPluginName(), readonlyConfig);
-        } else {
-            catalogTable = CatalogTableUtil.buildSimpleTextTable();
-        }
+        final CatalogTable catalogTable = catalogTableFromConfig;
+        boolean configSchema =
+                readonlyConfig.getOptional(ConnectorCommonOptions.SCHEMA).isPresent();
         if (CollectionUtils.isEmpty(filePaths)) {
+            // When there are no files (including sync_mode=update filtered all files), choose a
+            // compatible schema so that downstream can initialize correctly.
+            if (fileFormat == FileFormat.BINARY) {
+                String rootPath = readonlyConfig.get(FileBaseSourceOptions.FILE_PATH);
+                return newCatalogTable(
+                        catalogTable, readStrategy.getSeaTunnelRowTypeInfo(rootPath));
+            }
             return catalogTable;
         }
         switch (fileFormat) {

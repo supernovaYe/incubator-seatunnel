@@ -32,6 +32,7 @@ import org.apache.paimon.types.FloatType;
 import org.apache.paimon.types.IntType;
 import org.apache.paimon.types.RowType;
 import org.apache.paimon.types.SmallIntType;
+import org.apache.paimon.types.TimeType;
 import org.apache.paimon.types.TimestampType;
 import org.apache.paimon.types.TinyIntType;
 import org.apache.paimon.types.VarBinaryType;
@@ -46,13 +47,16 @@ import net.sf.jsqlparser.statement.select.PlainSelect;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.Arrays;
+import java.util.Map;
 
 import static org.apache.seatunnel.connectors.seatunnel.paimon.source.converter.SqlToPaimonPredicateConverter.convertToPlainSelect;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class SqlToPaimonConverterTest {
 
@@ -77,7 +81,8 @@ public class SqlToPaimonConverterTest {
                                 new DataField(9, "float_col", new FloatType()),
                                 new DataField(10, "double_col", new DoubleType()),
                                 new DataField(11, "date_col", new DateType()),
-                                new DataField(12, "timestamp_col", new TimestampType())));
+                                new DataField(12, "timestamp_col", new TimestampType()),
+                                new DataField(13, "time_col", new TimeType())));
 
         fieldNames = rowType.getFieldNames().toArray(new String[0]);
     }
@@ -97,7 +102,8 @@ public class SqlToPaimonConverterTest {
                         + "float_col = 5.5 AND "
                         + "double_col = 6.6 AND "
                         + "date_col = '2022-01-01' AND "
-                        + "timestamp_col = '2022-01-01T12:00:00.123'";
+                        + "timestamp_col = '2022-01-01T12:00:00.123' AND "
+                        + "time_col = '12:00:00.123'";
 
         PlainSelect plainSelect = convertToPlainSelect(query);
         Predicate predicate =
@@ -125,7 +131,9 @@ public class SqlToPaimonConverterTest {
                         builder.equal(
                                 12,
                                 Timestamp.fromLocalDateTime(
-                                        LocalDateTime.parse("2022-01-01T12:00:00.123"))));
+                                        LocalDateTime.parse("2022-01-01T12:00:00.123"))),
+                        builder.equal(
+                                13, DateTimeUtils.toInternal(LocalTime.parse("12:00:00.123"))));
 
         assertEquals(expectedPredicate.toString(), predicate.toString());
     }
@@ -201,6 +209,23 @@ public class SqlToPaimonConverterTest {
     }
 
     @Test
+    public void testConvertSqlWhereToPaimonPredicateWithBetween() {
+        String query = "SELECT * FROM table WHERE int_col between 3 and 6";
+
+        PlainSelect plainSelect = convertToPlainSelect(query);
+        Predicate predicate =
+                SqlToPaimonPredicateConverter.convertSqlWhereToPaimonPredicate(
+                        rowType, plainSelect);
+
+        assertNotNull(predicate);
+
+        PredicateBuilder builder = new PredicateBuilder(rowType);
+        Predicate expectedPredicate = PredicateBuilder.or(builder.between(7, 3, 6));
+
+        assertEquals(expectedPredicate.toString(), predicate.toString());
+    }
+
+    @Test
     public void testConvertSqlSelectToPaimonProjectionArrayWithALL() {
         String query = "SELECT * FROM table WHERE int_col > 3 OR double_col < 6.6";
 
@@ -224,5 +249,99 @@ public class SqlToPaimonConverterTest {
 
         int[] expectedProjectionIndex = {4, 7, 0, 12, 2};
         assertArrayEquals(projectionIndex, expectedProjectionIndex);
+    }
+
+    @Test
+    public void testConvertSqlWhereToPaimonLikePredicate() {
+        String query = "SELECT * FROM table WHERE varchar_col like 'te%'";
+
+        PlainSelect plainSelect = convertToPlainSelect(query);
+        Predicate predicate =
+                SqlToPaimonPredicateConverter.convertSqlWhereToPaimonPredicate(
+                        rowType, plainSelect);
+
+        assertNotNull(predicate);
+
+        PredicateBuilder builder = new PredicateBuilder(rowType);
+        Predicate expectedPredicate = PredicateBuilder.or(builder.startsWith(1, "te"));
+
+        assertEquals(expectedPredicate.toString(), predicate.toString());
+
+        query = "SELECT * FROM table WHERE varchar_col like '%st'";
+
+        plainSelect = convertToPlainSelect(query);
+        predicate =
+                SqlToPaimonPredicateConverter.convertSqlWhereToPaimonPredicate(
+                        rowType, plainSelect);
+
+        assertNotNull(predicate);
+
+        builder = new PredicateBuilder(rowType);
+        expectedPredicate = PredicateBuilder.or(builder.endsWith(1, "st"));
+
+        assertEquals(expectedPredicate.toString(), predicate.toString());
+
+        query = "SELECT * FROM table WHERE varchar_col like '%es%'";
+        plainSelect = convertToPlainSelect(query);
+        predicate =
+                SqlToPaimonPredicateConverter.convertSqlWhereToPaimonPredicate(
+                        rowType, plainSelect);
+
+        assertNotNull(predicate);
+
+        builder = new PredicateBuilder(rowType);
+        expectedPredicate = PredicateBuilder.or(builder.contains(1, "es"));
+
+        assertEquals(expectedPredicate.toString(), predicate.toString());
+    }
+
+    @Test
+    public void testParseDynamicOptions() {
+        String query =
+                "SELECT * FROM table /*+ OPTIONS('incremental-between-timestamp' = '2025-03-12 00:00:00,2025-03-12 00:08:00') */ WHERE int_col > 3 OR double_col < 6.6 ";
+        Map<String, String> dynamicOptions =
+                SqlToPaimonPredicateConverter.parseDynamicOptions(query);
+        assertEquals(1, dynamicOptions.size());
+        assertTrue(dynamicOptions.containsKey("incremental-between-timestamp"));
+        assertEquals(
+                "2025-03-12 00:00:00,2025-03-12 00:08:00",
+                dynamicOptions.get("incremental-between-timestamp"));
+
+        query =
+                "SELECT * FROM table /*+ OPTIONS('incremental-between-timestamp' = '2025-03-12 00:00:00,2025-03-12 00:08:00', 'scan.tag-name' = 'my-tag') */ WHERE int_col > 3 OR double_col < 6.6 ";
+        dynamicOptions = SqlToPaimonPredicateConverter.parseDynamicOptions(query);
+        assertEquals(2, dynamicOptions.size());
+        assertTrue(dynamicOptions.containsKey("incremental-between-timestamp"));
+        assertTrue(dynamicOptions.containsKey("scan.tag-name"));
+        assertEquals(
+                "2025-03-12 00:00:00,2025-03-12 00:08:00",
+                dynamicOptions.get("incremental-between-timestamp"));
+        assertEquals("my-tag", dynamicOptions.get("scan.tag-name"));
+    }
+
+    @Test
+    public void testPiamonQuoteIdentifier() {
+        String query =
+                "SELECT `decimal_col`, `int_col`, `char_col`, `timestamp_col`, `boolean_col`, time_col FROM table WHERE int_col > 3 OR `double_col` < 6.6 ";
+
+        PlainSelect plainSelect = convertToPlainSelect(query);
+        assertNotNull(plainSelect);
+
+        int[] fieldIndex =
+                SqlToPaimonPredicateConverter.convertSqlSelectToPaimonProjectionIndex(
+                        rowType.getFieldNames().toArray(new String[0]), plainSelect);
+        assertNotNull(fieldIndex);
+        assertEquals(6, fieldIndex.length);
+        assertEquals(4, fieldIndex[0]);
+        assertEquals(7, fieldIndex[1]);
+        assertEquals(0, fieldIndex[2]);
+        assertEquals(12, fieldIndex[3]);
+        assertEquals(2, fieldIndex[4]);
+        assertEquals(13, fieldIndex[5]);
+
+        Predicate predicate =
+                SqlToPaimonPredicateConverter.convertSqlWhereToPaimonPredicate(
+                        rowType, plainSelect);
+        assertNotNull(predicate);
     }
 }

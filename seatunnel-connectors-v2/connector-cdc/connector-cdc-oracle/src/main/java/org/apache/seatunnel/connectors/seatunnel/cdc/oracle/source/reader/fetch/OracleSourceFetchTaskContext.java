@@ -23,15 +23,11 @@ import org.apache.seatunnel.connectors.cdc.base.dialect.JdbcDataSourceDialect;
 import org.apache.seatunnel.connectors.cdc.base.relational.JdbcSourceEventDispatcher;
 import org.apache.seatunnel.connectors.cdc.base.source.offset.Offset;
 import org.apache.seatunnel.connectors.cdc.base.source.reader.external.JdbcSourceFetchTaskContext;
-import org.apache.seatunnel.connectors.cdc.base.source.split.IncrementalSplit;
-import org.apache.seatunnel.connectors.cdc.base.source.split.SnapshotSplit;
 import org.apache.seatunnel.connectors.cdc.base.source.split.SourceSplitBase;
-import org.apache.seatunnel.connectors.cdc.debezium.EmbeddedDatabaseHistory;
 import org.apache.seatunnel.connectors.seatunnel.cdc.oracle.config.OracleSourceConfig;
 import org.apache.seatunnel.connectors.seatunnel.cdc.oracle.source.offset.RedoLogOffset;
 import org.apache.seatunnel.connectors.seatunnel.cdc.oracle.utils.OracleUtils;
 
-import org.apache.kafka.connect.data.SchemaAndValue;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
 
@@ -49,6 +45,8 @@ import io.debezium.connector.oracle.OracleTopicSelector;
 import io.debezium.connector.oracle.SourceInfo;
 import io.debezium.connector.oracle.logminer.LogMinerOracleOffsetContextLoader;
 import io.debezium.data.Envelope;
+import io.debezium.heartbeat.DefaultHeartbeatConnectionProvider;
+import io.debezium.heartbeat.HeartbeatFactory;
 import io.debezium.pipeline.DataChangeEvent;
 import io.debezium.pipeline.ErrorHandler;
 import io.debezium.pipeline.metrics.SnapshotChangeEventSourceMetrics;
@@ -58,7 +56,6 @@ import io.debezium.pipeline.spi.Offsets;
 import io.debezium.relational.Table;
 import io.debezium.relational.TableId;
 import io.debezium.relational.Tables;
-import io.debezium.relational.history.TableChanges;
 import io.debezium.schema.DataCollectionId;
 import io.debezium.schema.TopicSelector;
 import io.debezium.util.Collect;
@@ -66,11 +63,6 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.sql.SQLException;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 
 import static org.apache.seatunnel.connectors.seatunnel.cdc.oracle.utils.OracleConnectionUtils.createOracleConnection;
@@ -87,7 +79,6 @@ public class OracleSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
     private SnapshotChangeEventSourceMetrics<OraclePartition> snapshotChangeEventSourceMetrics;
     private OracleStreamingChangeEventSourceMetrics streamingChangeEventSourceMetrics;
 
-    private Collection<TableChanges.TableChange> engineHistory;
     private TopicSelector<TableId> topicSelector;
     private JdbcSourceEventDispatcher<OraclePartition> dispatcher;
     private OraclePartition oraclePartition;
@@ -105,7 +96,7 @@ public class OracleSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
     @Override
     public void configure(SourceSplitBase sourceSplitBase) {
         // Initializes the table schema
-        registerDatabaseHistory(sourceSplitBase);
+        super.registerDatabaseHistory(sourceSplitBase, connection);
 
         // initial stateful objects
         final OracleConnectorConfig connectorConfig = getDbzConnectorConfig();
@@ -151,6 +142,12 @@ public class OracleSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
                         connectorConfig.getTableFilters().dataCollectionFilter(),
                         DataChangeEvent::new,
                         metadataProvider,
+                        new HeartbeatFactory<>(
+                                connectorConfig,
+                                topicSelector,
+                                schemaNameAdjuster,
+                                new DefaultHeartbeatConnectionProvider(connection),
+                                null),
                         schemaNameAdjuster);
 
         final OracleChangeEventSourceMetricsFactory changeEventSourceMetricsFactory =
@@ -256,49 +253,6 @@ public class OracleSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
                 (OracleOffsetContext) loader.load(offset.getOffset());
 
         return oracleOffsetContext;
-    }
-
-    private void registerDatabaseHistory(SourceSplitBase sourceSplitBase) {
-        List<TableChanges.TableChange> engineHistory = new ArrayList<>();
-        // TODO: support save table schema
-        if (sourceSplitBase instanceof SnapshotSplit) {
-            SnapshotSplit snapshotSplit = (SnapshotSplit) sourceSplitBase;
-            engineHistory.add(
-                    dataSourceDialect.queryTableSchema(connection, snapshotSplit.getTableId()));
-        } else {
-            IncrementalSplit incrementalSplit = (IncrementalSplit) sourceSplitBase;
-            Map<TableId, byte[]> historyTableChanges = incrementalSplit.getHistoryTableChanges();
-            for (TableId tableId : incrementalSplit.getTableIds()) {
-                if (historyTableChanges != null && historyTableChanges.containsKey(tableId)) {
-                    SchemaAndValue schemaAndValue =
-                            jsonConverter.toConnectData("topic", historyTableChanges.get(tableId));
-                    Struct deserializedStruct = (Struct) schemaAndValue.value();
-
-                    TableChanges tableChanges =
-                            tableChangeSerializer.deserialize(
-                                    Collections.singletonList(deserializedStruct), false);
-
-                    Iterator<TableChanges.TableChange> iterator = tableChanges.iterator();
-                    TableChanges.TableChange tableChange = null;
-                    while (iterator.hasNext()) {
-                        if (tableChange != null) {
-                            throw new IllegalStateException(
-                                    "The table changes should only have one element");
-                        }
-                        tableChange = iterator.next();
-                    }
-                    engineHistory.add(tableChange);
-                    continue;
-                }
-                engineHistory.add(dataSourceDialect.queryTableSchema(connection, tableId));
-            }
-        }
-
-        EmbeddedDatabaseHistory.registerHistory(
-                sourceConfig
-                        .getDbzConfiguration()
-                        .getString(EmbeddedDatabaseHistory.DATABASE_HISTORY_INSTANCE_NAME),
-                engineHistory);
     }
 
     private void validateAndLoadDatabaseHistory(

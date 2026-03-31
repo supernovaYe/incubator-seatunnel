@@ -23,6 +23,7 @@ import org.apache.seatunnel.e2e.common.TestResource;
 import org.apache.seatunnel.e2e.common.TestSuiteBase;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.lifecycle.Startables;
@@ -71,13 +72,10 @@ public abstract class AbstractDorisIT extends TestSuiteBase implements TestResou
     protected static final String DRIVER_CLASS = "com.mysql.cj.jdbc.Driver";
     protected static final String DRIVER_JAR =
             "https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/8.0.32/mysql-connector-j-8.0.32.jar";
-    private static final boolean isGithubActionsEnv =
-            "true".equalsIgnoreCase(System.getenv("GITHUB_ACTIONS"));
 
     @BeforeAll
     @Override
     public void startUp() {
-        log.info("isGithubActionsEnv: {}", isGithubActionsEnv);
         container =
                 new GenericContainer<>(DOCKER_IMAGE)
                         .withNetwork(NETWORK)
@@ -109,9 +107,7 @@ public abstract class AbstractDorisIT extends TestSuiteBase implements TestResou
         props.put("user", USERNAME);
         props.put("password", PASSWORD);
         jdbcConnection = driver.connect(String.format(URL, container.getHost()), props);
-        if (isGithubActionsEnv) {
-            initializeBE();
-        }
+        initializeBE();
         try (Statement statement = jdbcConnection.createStatement()) {
             statement.execute(SET_SQL);
             statement.execute(SET_CONNECTIONS);
@@ -133,6 +129,10 @@ public abstract class AbstractDorisIT extends TestSuiteBase implements TestResou
             List<String> beList = new ArrayList<>();
             while (beResultSet.next()) {
                 beList.add(beResultSet.getString("Host"));
+            }
+            if (beList.isEmpty()) {
+                log.error("doris BE is empty, skip initialization");
+                Assertions.fail("doris BE is empty, skip initialization");
             }
             if (beList.stream().anyMatch("127.0.0.1"::equals)) {
                 ResultSet resultSet = statement.executeQuery(SHOW_FE);

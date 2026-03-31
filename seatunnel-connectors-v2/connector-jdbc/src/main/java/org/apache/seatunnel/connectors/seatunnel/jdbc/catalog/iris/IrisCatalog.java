@@ -19,6 +19,7 @@
 package org.apache.seatunnel.connectors.seatunnel.jdbc.catalog.iris;
 
 import org.apache.seatunnel.shade.com.google.common.annotations.VisibleForTesting;
+import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
 
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.catalog.Column;
@@ -40,8 +41,6 @@ import org.apache.seatunnel.connectors.seatunnel.jdbc.catalog.utils.CatalogUtils
 import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.iris.IrisTypeConverter;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.iris.IrisTypeMapper;
 
-import org.apache.commons.lang3.StringUtils;
-
 import lombok.extern.slf4j.Slf4j;
 
 import java.sql.Connection;
@@ -61,8 +60,12 @@ public class IrisCatalog extends AbstractJdbcCatalog {
             "SELECT TABLE_SCHEMA,TABLE_NAME FROM INFORMATION_SCHEMA.Tables WHERE TABLE_SCHEMA='%s' and TABLE_TYPE != 'SYSTEM TABLE' and TABLE_TYPE != 'SYSTEM VIEW'";
 
     public IrisCatalog(
-            String catalogName, String username, String password, JdbcUrlUtil.UrlInfo urlInfo) {
-        super(catalogName, username, password, urlInfo, null);
+            String catalogName,
+            String username,
+            String password,
+            JdbcUrlUtil.UrlInfo urlInfo,
+            String driverClass) {
+        super(catalogName, username, password, urlInfo, null, driverClass);
     }
 
     @Override

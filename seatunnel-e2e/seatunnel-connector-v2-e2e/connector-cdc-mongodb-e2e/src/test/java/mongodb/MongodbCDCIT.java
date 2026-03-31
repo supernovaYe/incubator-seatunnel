@@ -17,6 +17,9 @@
 
 package mongodb;
 
+import org.apache.seatunnel.api.serialization.DefaultSerializer;
+import org.apache.seatunnel.common.utils.FileUtils;
+import org.apache.seatunnel.connectors.cdc.base.source.split.IncrementalSplit;
 import org.apache.seatunnel.connectors.seatunnel.cdc.mysql.testutils.MySqlContainer;
 import org.apache.seatunnel.connectors.seatunnel.cdc.mysql.testutils.MySqlVersion;
 import org.apache.seatunnel.connectors.seatunnel.cdc.mysql.testutils.UniqueDatabase;
@@ -28,6 +31,12 @@ import org.apache.seatunnel.e2e.common.container.TestContainer;
 import org.apache.seatunnel.e2e.common.junit.DisabledOnContainer;
 import org.apache.seatunnel.e2e.common.junit.TestContainerExtension;
 import org.apache.seatunnel.e2e.common.util.JobIdGenerator;
+import org.apache.seatunnel.engine.checkpoint.storage.PipelineState;
+import org.apache.seatunnel.engine.checkpoint.storage.hdfs.HdfsStorage;
+import org.apache.seatunnel.engine.serializer.protobuf.ProtoStuffSerializer;
+import org.apache.seatunnel.engine.server.checkpoint.ActionState;
+import org.apache.seatunnel.engine.server.checkpoint.ActionStateKey;
+import org.apache.seatunnel.engine.server.checkpoint.CompletedCheckpoint;
 
 import org.bson.Document;
 import org.bson.types.ObjectId;
@@ -35,7 +44,10 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestTemplate;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.testcontainers.containers.Container;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
 import org.testcontainers.lifecycle.Startables;
 import org.testcontainers.utility.DockerLoggerFactory;
@@ -44,7 +56,10 @@ import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoCursor;
+import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Sorts;
+import com.mongodb.client.model.Updates;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
@@ -57,10 +72,13 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -95,6 +113,8 @@ public class MongodbCDCIT extends TestSuiteBase implements TestResource {
     private static final String MYSQL_USER_PASSWORD = "seatunnel";
 
     private static final String MYSQL_DATABASE = "mongodb_cdc";
+
+    private static final String DEFAULT_CHECKPOINT_PATH = "/tmp/seatunnel/checkpoint_snapshot";
 
     private static final MySqlContainer MYSQL_CONTAINER = createMySqlContainer();
 
@@ -197,10 +217,10 @@ public class MongodbCDCIT extends TestSuiteBase implements TestResource {
                     }
                     return null;
                 });
-        TimeUnit.SECONDS.sleep(10);
+        TimeUnit.SECONDS.sleep(20);
         // insert update delete
         upsertDeleteSourceTable();
-        TimeUnit.SECONDS.sleep(30);
+        TimeUnit.SECONDS.sleep(20);
         assertionsSourceAndSink(MONGODB_COLLECTION_1, SINK_SQL_PRODUCTS);
         assertionsSourceAndSink(MONGODB_COLLECTION_2, SINK_SQL_ORDERS);
 
@@ -208,6 +228,82 @@ public class MongodbCDCIT extends TestSuiteBase implements TestResource {
         TimeUnit.SECONDS.sleep(20);
         assertionsSourceAndSink(MONGODB_COLLECTION_1, SINK_SQL_PRODUCTS);
         assertionsSourceAndSink(MONGODB_COLLECTION_2, SINK_SQL_ORDERS);
+
+        mongodbContainer.executeCommandFileInDatabase("inventory", MONGODB_DATABASE);
+
+        // test drop collection
+        mongodbContainer.executeCommandInDatabase(
+                "db." + MONGODB_COLLECTION_2 + ".drop", MONGODB_DATABASE);
+
+        MongoDatabase mongoDatabase = client.getDatabase(MONGODB_DATABASE);
+        MongoCollection<Document> collection1 = mongoDatabase.getCollection(MONGODB_COLLECTION_1);
+
+        Document document = new Document();
+        document.put("name", "soap5677");
+        document.put("description", "versatile cleaning essential for home and industry");
+        document.put("weight", "4000");
+        collection1.insertOne(document);
+
+        collection1.updateOne(
+                Filters.eq("name", "soap5677"),
+                Updates.set("description", "versatile cleaning essential"));
+
+        TimeUnit.SECONDS.sleep(10);
+        assertionsSourceAndSink(MONGODB_COLLECTION_1, SINK_SQL_PRODUCTS);
+    }
+
+    @TestTemplate
+    public void testMongodbCdcMultiTaskConcurrentSubmission(TestContainer container)
+            throws InterruptedException {
+        cleanSourceTable();
+
+        // Submit two independent CDC tasks concurrently, each reading from different collections
+        CompletableFuture<Void> task1 =
+                CompletableFuture.supplyAsync(
+                        () -> {
+                            try {
+                                container.executeJob("/mongodbcdc_to_mysql.conf");
+                            } catch (Exception e) {
+                                log.error("Task 1 (products) exception: " + e.getMessage());
+                                throw new RuntimeException(e);
+                            }
+                            return null;
+                        });
+
+        CompletableFuture<Void> task2 =
+                CompletableFuture.supplyAsync(
+                        () -> {
+                            try {
+                                container.executeJob("/mongodbcdc_to_mysql_orders.conf");
+                            } catch (Exception e) {
+                                log.error("Task 2 (orders) exception: " + e.getMessage());
+                                throw new RuntimeException(e);
+                            }
+                            return null;
+                        });
+
+        TimeUnit.SECONDS.sleep(20);
+        assertTaskNotCompletedExceptionally(task1, "products");
+        assertTaskNotCompletedExceptionally(task2, "orders");
+
+        // insert update delete operations
+        upsertDeleteSourceTable();
+
+        TimeUnit.SECONDS.sleep(20);
+
+        // Verify both tasks work correctly without cache interference
+        assertionsSourceAndSink(MONGODB_COLLECTION_1, SINK_SQL_PRODUCTS);
+        assertionsSourceAndSink(MONGODB_COLLECTION_2, SINK_SQL_ORDERS);
+        assertTaskNotCompletedExceptionally(task1, "products");
+        assertTaskNotCompletedExceptionally(task2, "orders");
+
+        // Append incremental changes and verify again to ensure CDC continues to work
+        appendIncrementalSourceTableData();
+        TimeUnit.SECONDS.sleep(20);
+        assertionsSourceAndSink(MONGODB_COLLECTION_1, SINK_SQL_PRODUCTS);
+        assertionsSourceAndSink(MONGODB_COLLECTION_2, SINK_SQL_ORDERS);
+        assertTaskNotCompletedExceptionally(task1, "products");
+        assertTaskNotCompletedExceptionally(task2, "orders");
     }
 
     @TestTemplate
@@ -249,6 +345,244 @@ public class MongodbCDCIT extends TestSuiteBase implements TestResource {
         }
     }
 
+    @TestTemplate
+    @DisabledOnContainer(
+            value = {},
+            type = {EngineType.SPARK, EngineType.FLINK},
+            disabledReason = "Currently SPARK and FLINK do not support restore")
+    public void testSavepointRecovery(TestContainer container)
+            throws InterruptedException, IOException {
+        cleanSourceTable();
+        String jobId = String.valueOf(JobIdGenerator.newJobId());
+        String jobConfigFile = "/mongodbcdc_to_mysql.conf";
+        CompletableFuture.supplyAsync(
+                () -> {
+                    try {
+                        container.executeJob(jobConfigFile, jobId);
+                    } catch (Exception e) {
+                        log.error("Commit task exception :" + e.getMessage());
+                        throw new RuntimeException();
+                    }
+                    return null;
+                });
+        TimeUnit.SECONDS.sleep(10);
+        upsertDeleteSourceTable();
+        Assertions.assertEquals(0, container.savepointJob(jobId).getExitCode());
+        TimeUnit.SECONDS.sleep(10);
+        // restore 1
+        CompletableFuture.supplyAsync(
+                () -> {
+                    try {
+                        container.restoreJob(jobConfigFile, jobId);
+                    } catch (Exception e) {
+                        log.error("Commit task exception :" + e.getMessage());
+                        throw new RuntimeException(e);
+                    }
+                    return null;
+                });
+        mongodbContainer.executeCommandFileInDatabase("inventory", MONGODB_DATABASE);
+        TimeUnit.SECONDS.sleep(10);
+        // Verify data consistency after recovery
+        assertionsSourceAndSink(MONGODB_COLLECTION_1, SINK_SQL_PRODUCTS);
+    }
+
+    @TestTemplate
+    @DisabledOnOs(OS.WINDOWS)
+    @DisabledOnContainer(
+            value = {},
+            type = {EngineType.SPARK, EngineType.FLINK},
+            disabledReason = "Currently SPARK and FLINK do not support restore")
+    public void testResumeTokenFailureRecovery(TestContainer container) throws Exception {
+        cleanSourceTable();
+        String jobId = String.valueOf(JobIdGenerator.newJobId());
+        String jobConfigFile = "/mongodbcdc_to_mysql.conf";
+
+        CompletableFuture.supplyAsync(
+                () -> {
+                    try {
+                        container.executeJob(jobConfigFile, jobId);
+                    } catch (Exception e) {
+                        log.error("Commit task exception :" + e.getMessage());
+                        throw new RuntimeException(e);
+                    }
+                    return null;
+                });
+
+        TimeUnit.SECONDS.sleep(10);
+
+        upsertDeleteSourceTable();
+
+        TimeUnit.SECONDS.sleep(20);
+
+        assertionsSourceAndSink(MONGODB_COLLECTION_1, SINK_SQL_PRODUCTS);
+
+        // savepoint
+        Assertions.assertEquals(0, container.savepointJob(jobId).getExitCode());
+        TimeUnit.SECONDS.sleep(5);
+
+        // modify resume token
+        modifyResumeTokenInCheckpoint(jobId, container);
+
+        // restore
+        CompletableFuture.supplyAsync(
+                () -> {
+                    try {
+                        container.restoreJob(jobConfigFile, jobId);
+                    } catch (Exception e) {
+                        log.error("Restore task exception :" + e.getMessage());
+                        throw new RuntimeException(e);
+                    }
+                    return null;
+                });
+
+        TimeUnit.SECONDS.sleep(30);
+
+        mongodbContainer.executeCommandFileInDatabase("inventory", MONGODB_DATABASE);
+
+        TimeUnit.SECONDS.sleep(20);
+
+        assertionsSourceAndSink(MONGODB_COLLECTION_1, SINK_SQL_PRODUCTS);
+    }
+
+    /**
+     * Directly modifying the resume-token in the checkpoint is to simulate a scenario where the
+     * resume-token fails, as it is not possible to directly specify the savepoint file storage
+     * location, and dynamic table additions and deletions cannot normally reproduce this exception
+     *
+     * @param jobId jobId
+     * @param container container
+     * @throws Exception
+     */
+    public void modifyResumeTokenInCheckpoint(String jobId, TestContainer container)
+            throws Exception {
+        ContainerExtendedFactory containerExtendedFactory =
+                new ContainerExtendedFactory() {
+                    @Override
+                    public void extend(GenericContainer<?> container)
+                            throws IOException, InterruptedException {
+                        FileUtils.createNewDir(DEFAULT_CHECKPOINT_PATH);
+                        container.execInContainer(
+                                "sh",
+                                "-c",
+                                "cd "
+                                        + DEFAULT_CHECKPOINT_PATH
+                                        + " && tar -czvf checkpoint.tar.gz "
+                                        + jobId);
+                        container.copyFileFromContainer(
+                                DEFAULT_CHECKPOINT_PATH + "/checkpoint.tar.gz",
+                                DEFAULT_CHECKPOINT_PATH + "/checkpoint.tar.gz");
+                        extractFiles();
+                    }
+
+                    private void extractFiles() {
+                        ProcessBuilder processBuilder = new ProcessBuilder();
+                        processBuilder.command(
+                                "sh",
+                                "-c",
+                                "cd "
+                                        + DEFAULT_CHECKPOINT_PATH
+                                        + "/"
+                                        + " && tar -zxvf checkpoint.tar.gz");
+                        try {
+                            Process process = processBuilder.start();
+                            int exitCode = process.waitFor();
+                            if (exitCode == 0) {
+                                log.info("Extract files successful.");
+                            } else {
+                                log.error("Extract files failed with exit code " + exitCode);
+                            }
+                        } catch (IOException | InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                };
+
+        container.executeExtraCommands(containerExtendedFactory);
+
+        Map<String, String> config = new HashMap<>();
+        config.put("storage.type", "hdfs");
+        config.put("namespace", DEFAULT_CHECKPOINT_PATH);
+        config.put("fs.defaultFS", "file:///tmp/");
+        HdfsStorage hdfsStorage = new HdfsStorage(config);
+
+        ProtoStuffSerializer serializer = new ProtoStuffSerializer();
+        PipelineState pipelineState =
+                hdfsStorage.getLatestCheckpointByJobIdAndPipelineId(jobId, "1");
+        CompletedCheckpoint checkpoint =
+                serializer.deserialize(pipelineState.getStates(), CompletedCheckpoint.class);
+
+        Map<ActionStateKey, ActionState> taskStates = checkpoint.getTaskStates();
+
+        taskStates.entrySet().stream()
+                .findFirst()
+                .ifPresent(
+                        entry -> {
+                            ActionState state = entry.getValue();
+                            state.getSubtaskStates().stream()
+                                    .findFirst()
+                                    .ifPresent(
+                                            subtaskState -> {
+                                                List<byte[]> stateBytes = subtaskState.getState();
+                                                DefaultSerializer<IncrementalSplit>
+                                                        mongoSplitSerializer =
+                                                                new DefaultSerializer<>();
+                                                IncrementalSplit incrementalSplit = null;
+                                                try {
+                                                    incrementalSplit =
+                                                            mongoSplitSerializer.deserialize(
+                                                                    stateBytes.get(0));
+                                                    log.info(
+                                                            "before modify incrementalSplit result {}",
+                                                            incrementalSplit);
+                                                    for (Map.Entry<String, String> entry1 :
+                                                            incrementalSplit
+                                                                    .getStartupOffset()
+                                                                    .getOffset()
+                                                                    .entrySet()) {
+                                                        if (entry1.getValue().contains("_data")) {
+                                                            entry1.setValue(
+                                                                    entry1.getValue()
+                                                                                    .substring(
+                                                                                            0, 21)
+                                                                            + "FF"
+                                                                            + entry1.getValue()
+                                                                                    .substring(23));
+                                                            subtaskState
+                                                                    .getState()
+                                                                    .set(
+                                                                            0,
+                                                                            mongoSplitSerializer
+                                                                                    .serialize(
+                                                                                            incrementalSplit));
+                                                        }
+                                                    }
+                                                } catch (IOException e) {
+                                                    throw new RuntimeException(e);
+                                                }
+                                                log.info(
+                                                        "after modify incrementalSplit result {}",
+                                                        incrementalSplit);
+                                            });
+                        });
+
+        byte[] states = serializer.serialize(checkpoint);
+        hdfsStorage.storeCheckPoint(
+                PipelineState.builder()
+                        .checkpointId(checkpoint.getCheckpointId())
+                        .jobId(String.valueOf(jobId))
+                        .pipelineId(checkpoint.getPipelineId())
+                        .states(states)
+                        .build());
+
+        // copy latestFileName to container
+        List<String> fileNames = hdfsStorage.getFileNames(DEFAULT_CHECKPOINT_PATH + "/" + jobId);
+        String latestFileName =
+                hdfsStorage.getLatestCheckpointFileNameByJobIdAndPipelineId(fileNames, "1");
+
+        String latestFilePath = DEFAULT_CHECKPOINT_PATH + "/" + jobId + "/" + latestFileName;
+        container.copyAbsolutePathToContainer(latestFilePath, latestFilePath);
+    }
+
     private void assertionsSourceAndSink(String mongodbCollection, String sinkMysqlQuery) {
         List<List<Object>> expected =
                 readMongodbData(mongodbCollection).stream()
@@ -261,6 +595,9 @@ public class MongodbCDCIT extends TestSuiteBase implements TestResource {
                                                 .map(
                                                         entry -> {
                                                             Object value = entry.getValue();
+                                                            if (value instanceof Long) {
+                                                                return new Long(value.toString());
+                                                            }
                                                             if (value instanceof Number) {
                                                                 return new BigDecimal(
                                                                                 value.toString())
@@ -337,10 +674,51 @@ public class MongodbCDCIT extends TestSuiteBase implements TestResource {
         mongodbContainer.executeCommandFileInDatabase("inventoryDDL", MONGODB_DATABASE);
     }
 
+    private void appendIncrementalSourceTableData() {
+        MongoDatabase mongoDatabase = client.getDatabase(MONGODB_DATABASE);
+        MongoCollection<Document> products = mongoDatabase.getCollection(MONGODB_COLLECTION_1);
+        MongoCollection<Document> orders = mongoDatabase.getCollection(MONGODB_COLLECTION_2);
+
+        ObjectId productId = new ObjectId("100000000000000000000120");
+        Document product = new Document();
+        product.put("_id", productId);
+        product.put("name", "usb-c cable");
+        product.put("description", "durable usb-c charging cable");
+        product.put("weight", "50");
+        products.insertOne(product);
+        products.updateOne(
+                Filters.eq("_id", productId), Updates.set("description", "durable usb-c cable 1m"));
+
+        Document order = new Document();
+        order.put("_id", new ObjectId("100000000000000000000121"));
+        order.put("order_number", 102600);
+        order.put("order_date", "2023-11-18");
+        order.put("quantity", 7);
+        order.put("product_id", productId);
+        orders.insertOne(order);
+    }
+
     private void cleanSourceTable() {
         mongodbContainer.executeCommandFileInDatabase("inventoryClean", MONGODB_DATABASE);
         truncateMysqlTable(MONGODB_COLLECTION_1);
         truncateMysqlTable(MONGODB_COLLECTION_2);
+    }
+
+    private void assertTaskNotCompletedExceptionally(
+            CompletableFuture<Void> task, String taskName) {
+        if (!task.isCompletedExceptionally()) {
+            return;
+        }
+        try {
+            task.join();
+        } catch (CompletionException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            throw new AssertionError(
+                    String.format(
+                            "Concurrent MongoDB CDC task for [%s] failed during submission",
+                            taskName),
+                    cause);
+        }
     }
 
     public void initConnection() {

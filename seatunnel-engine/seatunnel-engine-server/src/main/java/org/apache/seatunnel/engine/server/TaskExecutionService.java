@@ -25,7 +25,6 @@ import org.apache.seatunnel.api.tracing.MDCExecutorService;
 import org.apache.seatunnel.api.tracing.MDCTracer;
 import org.apache.seatunnel.common.utils.ExceptionUtils;
 import org.apache.seatunnel.common.utils.StringFormatUtils;
-import org.apache.seatunnel.engine.common.Constant;
 import org.apache.seatunnel.engine.common.config.ConfigProvider;
 import org.apache.seatunnel.engine.common.config.SeaTunnelConfig;
 import org.apache.seatunnel.engine.common.config.server.ThreadShareMode;
@@ -53,10 +52,10 @@ import org.apache.seatunnel.engine.server.service.jar.ServerConnectorPackageClie
 import org.apache.seatunnel.engine.server.task.SeaTunnelTask;
 import org.apache.seatunnel.engine.server.task.TaskGroupImmutableInformation;
 import org.apache.seatunnel.engine.server.task.operation.NotifyTaskStatusOperation;
+import org.apache.seatunnel.engine.server.task.operation.ReportMetricsOperation;
 
 import org.apache.commons.collections4.CollectionUtils;
 
-import com.hazelcast.core.OperationTimeoutException;
 import com.hazelcast.instance.impl.NodeState;
 import com.hazelcast.internal.metrics.DynamicMetricsProvider;
 import com.hazelcast.internal.metrics.MetricDescriptor;
@@ -65,7 +64,6 @@ import com.hazelcast.internal.metrics.MetricsRegistry;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.jet.impl.execution.init.CustomClassLoadedObject;
 import com.hazelcast.logging.ILogger;
-import com.hazelcast.map.IMap;
 import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.impl.operationservice.impl.InvocationFuture;
 import lombok.NonNull;
@@ -334,10 +332,23 @@ public class TaskExecutionService implements DynamicMetricsProvider {
 
             synchronized (this) {
                 if (executionContexts.containsKey(taskGroup.getTaskGroupLocation())) {
-                    throw new RuntimeException(
+                    // Task is actively running (present in executionContexts, not
+                    // finishedExecutionContexts). This happens during master failover: the new
+                    // master restores state and tries to re-deploy tasks that never stopped on
+                    // the worker. Return success so the master reconnects without interrupting
+                    // the running task. The worker will notify the master of the terminal state
+                    // via NotifyTaskStatusOperation when the task eventually completes.
+                    logger.warning(
                             String.format(
-                                    "TaskGroupLocation: %s already exists",
+                                    "TaskGroupLocation %s already exists and is active, "
+                                            + "skipping redeploy for master failover recovery",
                                     taskGroup.getTaskGroupLocation()));
+                    // Release classloaders acquired during deserialization
+                    for (Map.Entry<Long, Collection<URL>> entry : taskJars.entrySet()) {
+                        classLoaderService.releaseClassLoader(
+                                taskImmutableInfo.getJobId(), entry.getValue());
+                    }
+                    return TaskDeployState.success();
                 }
                 deployLocalTask(taskGroup, classLoaders, taskJars);
                 return TaskDeployState.success();
@@ -579,8 +590,28 @@ public class TaskExecutionService implements DynamicMetricsProvider {
                             nodeEngine.getNode().getState()));
             return;
         }
-        IMap<Long, HashMap<TaskLocation, SeaTunnelMetricsContext>> metricsImap =
-                nodeEngine.getHazelcastInstance().getMap(Constant.IMAP_RUNNING_JOB_METRICS);
+
+        InvocationFuture<Object> invoke =
+                nodeEngine
+                        .getOperationService()
+                        .createInvocationBuilder(
+                                SeaTunnelServer.SERVICE_NAME,
+                                new ReportMetricsOperation(collectLocalMetricsMap()),
+                                nodeEngine.getMasterAddress())
+                        .invoke();
+
+        try {
+            invoke.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.severe("update metrics context stopped due to thread interruption.", e);
+        } catch (Exception e) {
+            logger.severe("failed to update metrics", e);
+        }
+        this.printTaskExecutionRuntimeInfo();
+    }
+
+    private HashMap<TaskLocation, SeaTunnelMetricsContext> collectLocalMetricsMap() {
         Map<TaskGroupLocation, TaskGroupContext> contextMap = new HashMap<>();
         contextMap.putAll(finishedExecutionContexts);
         contextMap.putAll(executionContexts);
@@ -603,40 +634,7 @@ public class TaskExecutionService implements DynamicMetricsProvider {
                                         }
                                     });
                 });
-        if (!localMap.isEmpty()) {
-            boolean lockedIMap = false;
-            try {
-                lockedIMap =
-                        metricsImap.tryLock(
-                                Constant.IMAP_RUNNING_JOB_METRICS_KEY, 5, TimeUnit.SECONDS);
-                if (!lockedIMap) {
-                    logger.warning("try lock failed in update metrics");
-                    return;
-                }
-                HashMap<TaskLocation, SeaTunnelMetricsContext> centralMap =
-                        metricsImap.computeIfAbsent(
-                                Constant.IMAP_RUNNING_JOB_METRICS_KEY, k -> new HashMap<>());
-                centralMap.putAll(localMap);
-                metricsImap.put(Constant.IMAP_RUNNING_JOB_METRICS_KEY, centralMap);
-            } catch (Exception e) {
-                logger.warning(
-                        "The Imap acquisition failed due to the hazelcast node being offline or restarted, and will be retried next time",
-                        e);
-            } finally {
-                if (lockedIMap) {
-                    boolean unLockedIMap = false;
-                    while (!unLockedIMap) {
-                        try {
-                            metricsImap.unlock(Constant.IMAP_RUNNING_JOB_METRICS_KEY);
-                            unLockedIMap = true;
-                        } catch (OperationTimeoutException e) {
-                            logger.warning("unlock imap failed in update metrics", e);
-                        }
-                    }
-                }
-            }
-        }
-        this.printTaskExecutionRuntimeInfo();
+        return localMap;
     }
 
     public void printTaskExecutionRuntimeInfo() {
@@ -662,6 +660,10 @@ public class TaskExecutionService implements DynamicMetricsProvider {
 
     public void reportEvent(Event e) {
         eventService.reportEvent(e);
+    }
+
+    public SeaTunnelConfig getSeaTunnelConfig() {
+        return seaTunnelConfig;
     }
 
     private final class BlockingWorker implements Runnable {
@@ -702,7 +704,11 @@ public class TaskExecutionService implements DynamicMetricsProvider {
                     taskGroupExecutionTracker.exception(e);
                 }
             } catch (Throwable e) {
-                logger.warning("Exception in " + t, e);
+                if (taskGroupExecutionTracker.isCancel.get()) {
+                    logger.warning(String.format("Interrupted task %d - %s", t.getTaskID(), t));
+                } else {
+                    logger.warning("Exception in " + t, e);
+                }
                 taskGroupExecutionTracker.exception(e);
             } finally {
                 taskGroupExecutionTracker.taskDone(t);

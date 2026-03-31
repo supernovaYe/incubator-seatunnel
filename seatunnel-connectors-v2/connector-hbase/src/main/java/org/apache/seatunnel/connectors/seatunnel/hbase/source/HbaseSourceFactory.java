@@ -21,11 +21,14 @@ package org.apache.seatunnel.connectors.seatunnel.hbase.source;
 import org.apache.seatunnel.api.configuration.util.OptionRule;
 import org.apache.seatunnel.api.source.SeaTunnelSource;
 import org.apache.seatunnel.api.source.SourceSplit;
+import org.apache.seatunnel.api.table.catalog.CatalogTableUtil;
 import org.apache.seatunnel.api.table.connector.TableSource;
 import org.apache.seatunnel.api.table.factory.Factory;
 import org.apache.seatunnel.api.table.factory.TableSourceFactory;
 import org.apache.seatunnel.api.table.factory.TableSourceFactoryContext;
-import org.apache.seatunnel.connectors.seatunnel.hbase.config.HbaseConfig;
+import org.apache.seatunnel.connectors.seatunnel.hbase.config.HbaseBaseOptions;
+import org.apache.seatunnel.connectors.seatunnel.hbase.config.HbaseParameters;
+import org.apache.seatunnel.connectors.seatunnel.hbase.config.HbaseSourceOptions;
 import org.apache.seatunnel.connectors.seatunnel.hbase.constant.HbaseIdentifier;
 
 import com.google.auto.service.AutoService;
@@ -42,8 +45,20 @@ public class HbaseSourceFactory implements TableSourceFactory {
     @Override
     public OptionRule optionRule() {
         return OptionRule.builder()
-                .required(HbaseConfig.ZOOKEEPER_QUORUM)
-                .required(HbaseConfig.TABLE)
+                .required(HbaseSourceOptions.ZOOKEEPER_QUORUM)
+                .required(HbaseSourceOptions.TABLE)
+                .optional(
+                        HbaseBaseOptions.HBASE_EXTRA_CONFIG,
+                        HbaseSourceOptions.HBASE_CACHING_CONFIG,
+                        HbaseSourceOptions.HBASE_BATCH_CONFIG,
+                        HbaseSourceOptions.HBASE_CACHE_BLOCKS_CONFIG,
+                        HbaseSourceOptions.IS_BINARY_ROW_KEY,
+                        HbaseSourceOptions.START_ROW_KEY,
+                        HbaseSourceOptions.END_ROW_KEY,
+                        HbaseSourceOptions.START_ROW_INCLUSIVE,
+                        HbaseSourceOptions.END_ROW_INCLUSIVE,
+                        HbaseSourceOptions.START_TIMESTAMP,
+                        HbaseSourceOptions.END_TIMESTAMP)
                 .build();
     }
 
@@ -57,6 +72,8 @@ public class HbaseSourceFactory implements TableSourceFactory {
             TableSource<T, SplitT, StateT> createSource(TableSourceFactoryContext context) {
         return () ->
                 (SeaTunnelSource<T, SplitT, StateT>)
-                        new HbaseSource(context.getOptions().toConfig());
+                        new HbaseSource(
+                                HbaseParameters.buildWithSourceConfig(context.getOptions()),
+                                CatalogTableUtil.buildWithConfig(context.getOptions()));
     }
 }

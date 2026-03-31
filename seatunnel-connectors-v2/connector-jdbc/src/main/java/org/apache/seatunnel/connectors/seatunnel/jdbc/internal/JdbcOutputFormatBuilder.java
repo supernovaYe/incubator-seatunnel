@@ -17,8 +17,9 @@
 
 package org.apache.seatunnel.connectors.seatunnel.jdbc.internal;
 
+import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
+
 import org.apache.seatunnel.api.table.catalog.Column;
-import org.apache.seatunnel.api.table.catalog.TablePath;
 import org.apache.seatunnel.api.table.catalog.TableSchema;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.config.JdbcSinkConfig;
@@ -32,8 +33,6 @@ import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.executor.FieldNam
 import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.executor.InsertOrUpdateBatchStatementExecutor;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.executor.JdbcBatchStatementExecutor;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.executor.SimpleBatchStatementExecutor;
-
-import org.apache.commons.lang3.StringUtils;
 
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -61,11 +60,7 @@ public class JdbcOutputFormatBuilder {
         JdbcOutputFormat.StatementExecutorFactory statementExecutorFactory;
 
         final String database = jdbcSinkConfig.getDatabase();
-        final String table =
-                dialect.extractTableName(
-                        TablePath.of(
-                                jdbcSinkConfig.getDatabase() + "." + jdbcSinkConfig.getTable()));
-
+        final String table = jdbcSinkConfig.getTable();
         final List<String> primaryKeys = jdbcSinkConfig.getPrimaryKeys();
         if (jdbcSinkConfig.isUseCopyStatement()) {
             statementExecutorFactory =
@@ -192,8 +187,7 @@ public class JdbcOutputFormatBuilder {
         }
         if (enableUpsert) {
             Optional<String> upsertSQL =
-                    dialect.getUpsertStatement(
-                            database, table, tableSchema.getFieldNames(), pkNames);
+                    dialect.getUpsertStatementByTableSchema(database, table, tableSchema, pkNames);
             if (upsertSQL.isPresent()) {
                 return createSimpleExecutor(
                         upsertSQL.get(),

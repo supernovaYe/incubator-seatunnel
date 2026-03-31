@@ -26,26 +26,37 @@ import org.apache.commons.collections4.CollectionUtils;
 
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 @Slf4j
 public class MultipleTableFileSourceSplitEnumerator
         implements SourceSplitEnumerator<FileSourceSplit, FileSourceState> {
 
+    private static final int LOG_SPLIT_ID_LIMIT = 50;
+
     private final Context<FileSourceSplit> context;
-    private final Set<FileSourceSplit> pendingSplit;
+    private final Set<FileSourceSplit> allSplit;
     private final Set<FileSourceSplit> assignedSplit;
     private final Map<String, List<String>> filePathMap;
+    private final AtomicInteger assignCount = new AtomicInteger(0);
+    private final Object lock = new Object();
+    private final FileSplitStrategy fileSplitStrategy;
 
     public MultipleTableFileSourceSplitEnumerator(
             Context<FileSourceSplit> context,
-            BaseMultipleTableFileSourceConfig multipleTableFileSourceConfig) {
+            BaseMultipleTableFileSourceConfig multipleTableFileSourceConfig,
+            FileSplitStrategy fileSplitStrategy) {
         this.context = context;
         this.filePathMap =
                 multipleTableFileSourceConfig.getFileSourceConfigs().stream()
@@ -59,15 +70,54 @@ public class MultipleTableFileSourceSplitEnumerator
                                                         .toString(),
                                         BaseFileSourceConfig::getFilePaths));
         this.assignedSplit = new HashSet<>();
-        this.pendingSplit = new HashSet<>();
+        this.allSplit = new TreeSet<>(Comparator.comparing(FileSourceSplit::splitId));
+        this.fileSplitStrategy = fileSplitStrategy;
     }
 
     public MultipleTableFileSourceSplitEnumerator(
             Context<FileSourceSplit> context,
             BaseMultipleTableFileSourceConfig multipleTableFileSourceConfig,
             FileSourceState fileSourceState) {
-        this(context, multipleTableFileSourceConfig);
+        this(context, multipleTableFileSourceConfig, new DefaultFileSplitStrategy());
         this.assignedSplit.addAll(fileSourceState.getAssignedSplit());
+    }
+
+    public MultipleTableFileSourceSplitEnumerator(
+            Context<FileSourceSplit> context,
+            BaseMultipleTableFileSourceConfig multipleTableFileSourceConfig,
+            FileSplitStrategy fileSplitStrategy,
+            FileSourceState fileSourceState) {
+        this(context, multipleTableFileSourceConfig, fileSplitStrategy);
+        this.assignedSplit.addAll(fileSourceState.getAssignedSplit());
+    }
+
+    @Override
+    public void open() {
+        boolean hasMultiSplits = false;
+        Map<String, Integer> splitCountByTable = new HashMap<>();
+        for (Map.Entry<String, List<String>> filePathEntry : filePathMap.entrySet()) {
+            String tableId = filePathEntry.getKey();
+            List<String> filePaths = filePathEntry.getValue();
+            for (String filePath : filePaths) {
+                List<FileSourceSplit> splits = fileSplitStrategy.split(tableId, filePath);
+                splitCountByTable.merge(tableId, splits.size(), Integer::sum);
+                allSplit.addAll(splits);
+                if (splits.size() > 1) {
+                    hasMultiSplits = true;
+                    log.info(
+                            "Split file [{}] for table [{}] into {} splits",
+                            filePath,
+                            tableId,
+                            splits.size());
+                }
+            }
+        }
+        if (hasMultiSplits) {
+            log.info(
+                    "Split enumeration finished, total splits: {}, splits by table: {}",
+                    allSplit.size(),
+                    splitCountByTable);
+        }
     }
 
     @Override
@@ -75,33 +125,26 @@ public class MultipleTableFileSourceSplitEnumerator
         if (CollectionUtils.isEmpty(splits)) {
             return;
         }
-        pendingSplit.addAll(splits);
+        allSplit.addAll(splits);
         assignSplit(subtaskId);
     }
 
     @Override
     public int currentUnassignedSplitSize() {
-        return pendingSplit.size();
+        return allSplit.size() - assignedSplit.size();
     }
 
     @Override
     public void handleSplitRequest(int subtaskId) {}
 
     @Override
-    public void registerReader(int subtaskId) {
-        for (Map.Entry<String, List<String>> filePathEntry : filePathMap.entrySet()) {
-            String tableId = filePathEntry.getKey();
-            List<String> filePaths = filePathEntry.getValue();
-            for (String filePath : filePaths) {
-                pendingSplit.add(new FileSourceSplit(tableId, filePath));
-            }
-        }
-        assignSplit(subtaskId);
-    }
+    public void registerReader(int subtaskId) {}
 
     @Override
     public FileSourceState snapshotState(long checkpointId) {
-        return new FileSourceState(assignedSplit);
+        synchronized (lock) {
+            return new FileSourceState(assignedSplit);
+        }
     }
 
     @Override
@@ -113,13 +156,14 @@ public class MultipleTableFileSourceSplitEnumerator
         List<FileSourceSplit> currentTaskSplits = new ArrayList<>();
         if (context.currentParallelism() == 1) {
             // if parallelism == 1, we should assign all the splits to reader
-            currentTaskSplits.addAll(pendingSplit);
+            currentTaskSplits.addAll(allSplit);
         } else {
-            // if parallelism > 1, according to hashCode of split's id to determine whether to
+            // if parallelism > 1, according to polling strategy to determine whether to
             // allocate the current task
-            for (FileSourceSplit fileSourceSplit : pendingSplit) {
+            assignCount.set(0);
+            for (FileSourceSplit fileSourceSplit : allSplit) {
                 int splitOwner =
-                        getSplitOwner(fileSourceSplit.splitId(), context.currentParallelism());
+                        getSplitOwner(assignCount.getAndIncrement(), context.currentParallelism());
                 if (splitOwner == taskId) {
                     currentTaskSplits.add(fileSourceSplit);
                 }
@@ -129,33 +173,60 @@ public class MultipleTableFileSourceSplitEnumerator
         context.assignSplit(taskId, currentTaskSplits);
         // save the state of assigned splits
         assignedSplit.addAll(currentTaskSplits);
-        // remove the assigned splits from pending splits
-        currentTaskSplits.forEach(pendingSplit::remove);
+
         log.info(
-                "SubTask {} is assigned to [{}]",
+                "SubTask {} is assigned to [{}], size {}",
                 taskId,
-                currentTaskSplits.stream()
-                        .map(FileSourceSplit::splitId)
-                        .collect(Collectors.joining(",")));
+                summarizeSplitIds(currentTaskSplits),
+                currentTaskSplits.size());
         context.signalNoMoreSplits(taskId);
     }
 
-    private static int getSplitOwner(String tp, int numReaders) {
-        return (tp.hashCode() & Integer.MAX_VALUE) % numReaders;
+    private static String summarizeSplitIds(List<FileSourceSplit> splits) {
+        if (splits.isEmpty()) {
+            return "";
+        }
+        if (splits.size() <= LOG_SPLIT_ID_LIMIT) {
+            return splits.stream().map(FileSourceSplit::splitId).collect(Collectors.joining(","));
+        }
+        return splits.stream()
+                        .limit(LOG_SPLIT_ID_LIMIT)
+                        .map(FileSourceSplit::splitId)
+                        .collect(Collectors.joining(","))
+                + ",...("
+                + (splits.size() - LOG_SPLIT_ID_LIMIT)
+                + " more)";
     }
 
-    @Override
-    public void open() {
-        // do nothing
+    private static int getSplitOwner(int assignCount, int numReaders) {
+        return assignCount % numReaders;
     }
 
     @Override
     public void run() throws Exception {
-        // do nothing
+        for (int i = 0; i < context.currentParallelism(); i++) {
+            log.info("Assigned splits to reader [{}]", i);
+            synchronized (lock) {
+                assignSplit(i);
+            }
+        }
     }
 
     @Override
     public void close() throws IOException {
-        // do nothing
+        if (fileSplitStrategy instanceof Closeable) {
+            ((Closeable) fileSplitStrategy).close();
+            return;
+        }
+        if (fileSplitStrategy instanceof AutoCloseable) {
+            try {
+                ((AutoCloseable) fileSplitStrategy).close();
+            } catch (Exception e) {
+                if (e instanceof IOException) {
+                    throw (IOException) e;
+                }
+                throw new IOException(e);
+            }
+        }
     }
 }

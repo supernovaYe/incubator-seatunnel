@@ -31,6 +31,7 @@ connector-cdc-oracle
 connector-cdc-tidb
 connector-clickhouse
 connector-datahub
+connector-databend
 connector-dingtalk
 connector-doris
 connector-elasticsearch
@@ -45,6 +46,7 @@ connector-file-sftp
 connector-file-obs
 connector-google-sheets
 connector-google-firestore
+connector-graphql
 connector-hive
 connector-http-base
 connector-http-feishu
@@ -57,6 +59,7 @@ connector-http-myhours
 connector-http-notion
 connector-http-onesignal
 connector-http-wechat
+connector-http-airtable
 connector-hudi
 connector-iceberg
 connector-influxdb
@@ -93,3 +96,7 @@ connector-sls
 connector-qdrant
 connector-typesense
 connector-cdc-opengauss
+connector-sensorsdata
+connector-hugegraph
+connector-lance
+connector-mqtt

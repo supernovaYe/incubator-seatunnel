@@ -17,6 +17,8 @@
 
 package org.apache.seatunnel.connectors.seatunnel.paimon.sink.schema.handler;
 
+import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
+
 import org.apache.seatunnel.api.table.catalog.Column;
 import org.apache.seatunnel.api.table.catalog.TablePath;
 import org.apache.seatunnel.api.table.catalog.TableSchema;
@@ -32,7 +34,6 @@ import org.apache.seatunnel.api.table.schema.handler.TableSchemaChangeEventDispa
 import org.apache.seatunnel.connectors.seatunnel.paimon.catalog.PaimonCatalog;
 import org.apache.seatunnel.connectors.seatunnel.paimon.data.PaimonTypeMapper;
 
-import org.apache.commons.lang3.StringUtils;
 import org.apache.paimon.catalog.Identifier;
 import org.apache.paimon.schema.SchemaChange;
 import org.apache.paimon.types.DataField;
@@ -40,6 +41,9 @@ import org.apache.paimon.types.DataType;
 import org.apache.paimon.utils.Preconditions;
 
 import lombok.extern.slf4j.Slf4j;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.apache.seatunnel.connectors.seatunnel.paimon.sink.schema.UpdatedDataFields.canConvert;
 
@@ -95,13 +99,16 @@ public class AlterPaimonTableSchemaEventHandler {
                             ? null
                             : SchemaChange.Move.after(column.getName(), afterColumnName);
             BasicTypeDefine<DataType> reconvertColumn = PaimonTypeMapper.INSTANCE.reconvert(column);
-            SchemaChange schemaChange =
+            DataType nativeType = reconvertColumn.getNativeType();
+            List<SchemaChange> schemaChanges = new ArrayList<>();
+            schemaChanges.add(
                     SchemaChange.addColumn(
-                            column.getName(),
-                            reconvertColumn.getNativeType(),
-                            column.getComment(),
-                            move);
-            paimonCatalog.alterTable(identifier, schemaChange, false);
+                            column.getName(), nativeType.copy(true), column.getComment(), move));
+            if (!nativeType.isNullable()) {
+                schemaChanges.add(
+                        SchemaChange.updateColumnType(column.getName(), nativeType.copy(false)));
+            }
+            paimonCatalog.alterTable(identifier, schemaChanges, false);
         } else if (event instanceof AlterTableDropColumnEvent) {
             String columnName = ((AlterTableDropColumnEvent) event).getColumn();
             paimonCatalog.alterTable(identifier, SchemaChange.dropColumn(columnName), true);

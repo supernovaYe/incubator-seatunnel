@@ -33,6 +33,7 @@
         <module>connector-common</module>
         <module>connector-cdc</module>
         <module>connector-clickhouse</module>
+        <module>connector-databend</module>
         <module>connector-console</module>
         <module>connector-fake</module>
         <module>connector-http</module>
@@ -43,17 +44,20 @@
         <module>connector-hive</module>
         <module>connector-file</module>
         <module>connector-hudi</module>
+        <module>connector-hugegraph</module>
         <module>connector-assert</module>
         <module>connector-kudu</module>
         <module>connector-email</module>
         <module>connector-dingtalk</module>
         <module>connector-elasticsearch</module>
         <module>connector-iotdb</module>
+        <module>connector-iotdb-v2</module>
         <module>connector-neo4j</module>
         <module>connector-redis</module>
         <module>connector-datahub</module>
         <module>connector-sentry</module>
         <module>connector-mongodb</module>
+        <module>connector-mqtt</module>
         <module>connector-iceberg</module>
         <module>connector-influxdb</module>
         <module>connector-amazondynamodb</module>
@@ -83,6 +87,11 @@
         <module>connector-qdrant</module>
         <module>connector-sls</module>
         <module>connector-typesense</module>
+        <module>connector-graphql</module>
+        <module>connector-aerospike</module>
+        <module>connector-sensorsdata</module>
+        <module>connector-fluss</module>
+        <module>connector-lance</module>
     </modules>
 
     <dependencyManagement>

@@ -27,6 +27,7 @@ import org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.exception.MongodbCo
 import org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.source.offset.ChangeStreamDescriptor;
 import org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.source.offset.ChangeStreamOffset;
 import org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.MongodbRecordUtils;
+import org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.MongodbUtils;
 
 import org.apache.kafka.common.utils.SystemTime;
 import org.apache.kafka.common.utils.Time;
@@ -46,6 +47,7 @@ import com.mongodb.MongoNamespace;
 import com.mongodb.client.ChangeStreamIterable;
 import com.mongodb.client.MongoChangeStreamCursor;
 import com.mongodb.client.MongoClient;
+import com.mongodb.client.model.changestream.OperationType;
 import com.mongodb.kafka.connect.source.heartbeat.HeartbeatManager;
 import io.debezium.connector.base.ChangeEventQueue;
 import io.debezium.pipeline.DataChangeEvent;
@@ -55,24 +57,28 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.apache.seatunnel.common.exception.CommonErrorCodeDeprecated.ILLEGAL_ARGUMENT;
 import static org.apache.seatunnel.common.exception.CommonErrorCodeDeprecated.UNSUPPORTED_OPERATION;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.CLUSTER_TIME_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.COLL_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.DB_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.DOCUMENT_KEY;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.FAILED_TO_PARSE_ERROR;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.FALSE_FALSE;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.ID_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.ILLEGAL_OPERATION_ERROR;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.NS_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.SNAPSHOT_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.SOURCE_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.TS_MS_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.UNAUTHORIZED_ERROR;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.UNKNOWN_FIELD_ERROR;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.CLUSTER_TIME_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.COLL_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.DB_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.DOCUMENT_KEY;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.FAILED_TO_PARSE_ERROR;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.FALSE_FALSE;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.HEARTBEAT_KEY_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.ID_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.ILLEGAL_OPERATION_ERROR;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.NS_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.OPERATION_TYPE;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.SNAPSHOT_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.SOURCE_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.TS_MS_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.UNAUTHORIZED_ERROR;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.UNKNOWN_FIELD_ERROR;
 import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.source.offset.ChangeStreamOffset.NO_STOPPING_OFFSET;
 import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.MongodbRecordUtils.createHeartbeatPartitionMap;
 import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.MongodbRecordUtils.createPartitionMap;
@@ -80,7 +86,6 @@ import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.Mongod
 import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.MongodbRecordUtils.createWatermarkPartitionMap;
 import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.MongodbRecordUtils.currentBsonTimestamp;
 import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.MongodbRecordUtils.getResumeToken;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.MongodbUtils.createMongoClient;
 import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.MongodbUtils.getChangeStreamIterable;
 import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.MongodbUtils.getCurrentClusterTime;
 
@@ -91,6 +96,7 @@ public class MongodbStreamFetchTask implements FetchTask<SourceSplitBase> {
     private volatile boolean taskRunning = false;
 
     private MongodbSourceConfig sourceConfig;
+    private MongoClient mongoClient;
     private final Time time = new SystemTime();
     private boolean supportsStartAtOperationTime = true;
     private boolean supportsStartAfter = true;
@@ -107,7 +113,7 @@ public class MongodbStreamFetchTask implements FetchTask<SourceSplitBase> {
         ChangeStreamDescriptor descriptor = taskContext.getChangeStreamDescriptor();
         ChangeEventQueue<DataChangeEvent> queue = taskContext.getQueue();
 
-        MongoClient mongoClient = createMongoClient(sourceConfig);
+        this.mongoClient = taskContext.getMongoClient();
         MongoChangeStreamCursor<BsonDocument> changeStreamCursor =
                 openChangeStreamCursor(descriptor);
         HeartbeatManager heartbeatManager = openHeartbeatManagerIfNeeded(changeStreamCursor);
@@ -117,7 +123,23 @@ public class MongodbStreamFetchTask implements FetchTask<SourceSplitBase> {
         this.taskRunning = true;
         try {
             while (taskRunning) {
-                Optional<BsonDocument> next = Optional.ofNullable(changeStreamCursor.tryNext());
+                Optional<BsonDocument> next;
+                try {
+                    next = Optional.ofNullable(changeStreamCursor.tryNext());
+                } catch (MongoCommandException e) {
+                    if (MongodbUtils.checkIfChangeStreamCursorExpires(e)) {
+                        log.warn("Change stream cursor has expired, trying to recreate cursor");
+                        boolean resumeTokenExpires = MongodbUtils.checkIfResumeTokenExpires(e);
+                        if (resumeTokenExpires) {
+                            log.warn(
+                                    "Resume token has expired, fallback to timestamp restart mode");
+                        }
+                        changeStreamCursor = openChangeStreamCursor(descriptor, resumeTokenExpires);
+                        next = Optional.ofNullable(changeStreamCursor.tryNext());
+                    } else {
+                        throw e;
+                    }
+                }
                 SourceRecord changeRecord = null;
                 if (!next.isPresent()) {
                     long untilNext = nextUpdate - time.milliseconds();
@@ -138,27 +160,40 @@ public class MongodbStreamFetchTask implements FetchTask<SourceSplitBase> {
                     nextUpdate = time.milliseconds() + sourceConfig.getPollAwaitTimeMillis();
                 } else {
                     BsonDocument changeStreamDocument = next.get();
-                    MongoNamespace namespace = getMongoNamespace(changeStreamDocument);
+                    OperationType operationType = getOperationType(changeStreamDocument);
 
-                    BsonDocument resumeToken = changeStreamDocument.getDocument(ID_FIELD);
-                    BsonDocument valueDocument =
-                            normalizeChangeStreamDocument(changeStreamDocument);
+                    switch (operationType) {
+                        case INSERT:
+                        case UPDATE:
+                        case REPLACE:
+                        case DELETE:
+                            MongoNamespace namespace = getMongoNamespace(changeStreamDocument);
 
-                    log.trace("Adding {} to {}", valueDocument, namespace.getFullName());
+                            BsonDocument resumeToken = changeStreamDocument.getDocument(ID_FIELD);
+                            BsonDocument valueDocument =
+                                    normalizeChangeStreamDocument(changeStreamDocument);
 
-                    changeRecord =
-                            MongodbRecordUtils.buildSourceRecord(
-                                    createPartitionMap(
-                                            sourceConfig.getHosts(),
-                                            namespace.getDatabaseName(),
-                                            namespace.getCollectionName()),
-                                    createSourceOffsetMap(resumeToken, false),
-                                    namespace.getFullName(),
-                                    changeStreamDocument.getDocument(ID_FIELD),
-                                    valueDocument);
+                            log.trace("Adding {} to {}", valueDocument, namespace.getFullName());
+
+                            changeRecord =
+                                    MongodbRecordUtils.buildSourceRecord(
+                                            createPartitionMap(
+                                                    sourceConfig.getHosts(),
+                                                    namespace.getDatabaseName(),
+                                                    namespace.getCollectionName()),
+                                            createSourceOffsetMap(resumeToken, false),
+                                            namespace.getFullName(),
+                                            changeStreamDocument.getDocument(ID_FIELD),
+                                            valueDocument);
+                            break;
+                        default:
+                            // Ignore drop、drop_database、rename and other record to prevent
+                            // documentKey from being empty.
+                            log.info("Ignored {} record: {}", operationType, changeStreamDocument);
+                    }
                 }
 
-                if (changeRecord != null) {
+                if (changeRecord != null && !isBoundedRead()) {
                     queue.enqueue(new DataChangeEvent(changeRecord));
                 }
 
@@ -166,6 +201,10 @@ public class MongodbStreamFetchTask implements FetchTask<SourceSplitBase> {
                     ChangeStreamOffset currentOffset;
                     if (changeRecord != null) {
                         currentOffset = new ChangeStreamOffset(getResumeToken(changeRecord));
+                        // The log after the high watermark won't emit.
+                        if (currentOffset.isAtOrBefore(streamSplit.getStopOffset())) {
+                            queue.enqueue(new DataChangeEvent(changeRecord));
+                        }
                     } else {
                         // Heartbeat is not turned on or there is no update event
                         currentOffset = new ChangeStreamOffset(getCurrentClusterTime(mongoClient));
@@ -215,16 +254,25 @@ public class MongodbStreamFetchTask implements FetchTask<SourceSplitBase> {
 
     private MongoChangeStreamCursor<BsonDocument> openChangeStreamCursor(
             ChangeStreamDescriptor changeStreamDescriptor) {
+        return openChangeStreamCursor(changeStreamDescriptor, false);
+    }
+
+    private MongoChangeStreamCursor<BsonDocument> openChangeStreamCursor(
+            ChangeStreamDescriptor changeStreamDescriptor, boolean forceTimestampStartup) {
         ChangeStreamOffset offset =
                 new ChangeStreamOffset(streamSplit.getStartupOffset().getOffset());
 
         ChangeStreamIterable<Document> changeStreamIterable =
-                getChangeStreamIterable(sourceConfig, changeStreamDescriptor);
+                getChangeStreamIterable(
+                        mongoClient,
+                        changeStreamDescriptor,
+                        sourceConfig.getBatchSize(),
+                        sourceConfig.isUpdateLookup());
 
         BsonDocument resumeToken = offset.getResumeToken();
         BsonTimestamp timestamp = offset.getTimestamp();
 
-        if (resumeToken != null) {
+        if (resumeToken != null && !forceTimestampStartup) {
             if (supportsStartAfter) {
                 log.info("Open the change stream after the previous offset: {}", resumeToken);
                 changeStreamIterable.startAfter(resumeToken);
@@ -238,6 +286,11 @@ public class MongodbStreamFetchTask implements FetchTask<SourceSplitBase> {
             if (supportsStartAtOperationTime) {
                 log.info("Open the change stream at the timestamp: {}", timestamp);
                 changeStreamIterable.startAtOperationTime(timestamp);
+            } else if (forceTimestampStartup) {
+                log.error("Open change stream failed. Unable to resume from timestamp");
+                throw new MongodbConnectorException(
+                        ILLEGAL_ARGUMENT,
+                        "Open change stream failed. Unable to resume from timestamp");
             } else {
                 log.warn("Open the change stream of the latest offset");
             }
@@ -273,6 +326,9 @@ public class MongodbStreamFetchTask implements FetchTask<SourceSplitBase> {
                                 "Unauthorized $changeStream operation: %s %s",
                                 e.getErrorMessage(), e.getErrorCode()));
 
+            } else if (!forceTimestampStartup && MongodbUtils.checkIfResumeTokenExpires(e)) {
+                log.info("Failed to open cursor with resume token, fallback to timestamp startup");
+                return openChangeStreamCursor(changeStreamDescriptor, true);
             } else {
                 throw new MongodbConnectorException(ILLEGAL_ARGUMENT, "Open change stream failed");
             }
@@ -329,15 +385,39 @@ public class MongodbStreamFetchTask implements FetchTask<SourceSplitBase> {
         return new BsonDocument(ID_FIELD, primaryKey);
     }
 
+    /**
+     * Normalizes a heartbeat record by adding the HEARTBEAT=true flag to its offset.
+     *
+     * <p>The original heartbeat record from {@link HeartbeatManager} does not contain the HEARTBEAT
+     * flag in its offset, which causes {@link MongodbRecordUtils#isHeartbeatEvent} to return {@code
+     * false}. This would lead to the heartbeat record being incorrectly identified as a data change
+     * record and processed through {@link MongodbFetchTaskContext#isRecordBetween}, where a {@link
+     * NullPointerException} would occur because heartbeat records have no documentKey field.
+     *
+     * <p>By adding the HEARTBEAT=true flag, we ensure that:
+     *
+     * <ul>
+     *   <li>{@link MongodbRecordUtils#isHeartbeatEvent} returns {@code true}
+     *   <li>{@link MongodbRecordUtils#isDataChangeRecord} returns {@code false}
+     *   <li>The heartbeat record is excluded from range checking in {@link
+     *       MongodbFetchTaskContext#isRecordBetween}
+     * </ul>
+     *
+     * @param heartbeatRecord the original heartbeat record from HeartbeatManager
+     * @return a normalized heartbeat record with HEARTBEAT=true in its offset
+     */
     @Nonnull
     private SourceRecord normalizeHeartbeatRecord(@Nonnull SourceRecord heartbeatRecord) {
         final Struct heartbeatValue =
                 new Struct(SchemaBuilder.struct().field(TS_MS_FIELD, Schema.INT64_SCHEMA).build());
         heartbeatValue.put(TS_MS_FIELD, Instant.now().toEpochMilli());
 
+        Map<String, Object> heartbeatOffset = new HashMap<>(heartbeatRecord.sourceOffset());
+        heartbeatOffset.put(HEARTBEAT_KEY_FIELD, "true");
+
         return new SourceRecord(
                 heartbeatRecord.sourcePartition(),
-                heartbeatRecord.sourceOffset(),
+                heartbeatOffset,
                 heartbeatRecord.topic(),
                 heartbeatRecord.keySchema(),
                 heartbeatRecord.key(),
@@ -351,6 +431,10 @@ public class MongodbStreamFetchTask implements FetchTask<SourceSplitBase> {
 
         return new MongoNamespace(
                 ns.getString(DB_FIELD).getValue(), ns.getString(COLL_FIELD).getValue());
+    }
+
+    private OperationType getOperationType(BsonDocument changeStreamDocument) {
+        return OperationType.fromString(changeStreamDocument.getString(OPERATION_TYPE).getValue());
     }
 
     private boolean isBoundedRead() {

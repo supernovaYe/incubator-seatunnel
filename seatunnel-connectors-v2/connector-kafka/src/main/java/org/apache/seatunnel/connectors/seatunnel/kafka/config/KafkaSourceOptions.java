@@ -21,7 +21,6 @@ import org.apache.seatunnel.shade.com.fasterxml.jackson.core.type.TypeReference;
 
 import org.apache.seatunnel.api.configuration.Option;
 import org.apache.seatunnel.api.configuration.Options;
-import org.apache.seatunnel.api.table.catalog.schema.TableSchemaOptions;
 
 import java.util.Map;
 
@@ -42,6 +41,12 @@ public class KafkaSourceOptions extends KafkaBaseOptions {
                     .withDescription(
                             "Kafka consumer group id, used to distinguish different consumer groups.");
 
+    public static final Option<Integer> READER_CACHE_QUEUE_SIZE =
+            Options.key("reader_cache_queue_size")
+                    .intType()
+                    .defaultValue(1024)
+                    .withDescription("The size of reader queue.");
+
     public static final Option<Boolean> COMMIT_ON_CHECKPOINT =
             Options.key("commit_on_checkpoint")
                     .booleanType()
@@ -49,22 +54,15 @@ public class KafkaSourceOptions extends KafkaBaseOptions {
                     .withDescription(
                             "If true the consumer's offset will be periodically committed in the background.");
 
-    public static final Option<KafkaBaseOptions> SCHEMA =
-            Options.key("schema")
-                    .objectType(KafkaBaseOptions.class)
-                    .noDefaultValue()
-                    .withDescription(
-                            "The structure of the data, including field names and field types.");
-
     public static final Option<Boolean> DEBEZIUM_RECORD_INCLUDE_SCHEMA =
             Options.key("debezium_record_include_schema")
                     .booleanType()
                     .defaultValue(true)
                     .withDescription("Does the debezium record carry a schema.");
 
-    public static final Option<TableSchemaOptions.TableIdentifier> DEBEZIUM_RECORD_TABLE_FILTER =
+    public static final Option<TableIdentifierConfig> DEBEZIUM_RECORD_TABLE_FILTER =
             Options.key("debezium_record_table_filter")
-                    .type(new TypeReference<TableSchemaOptions.TableIdentifier>() {})
+                    .type(new TypeReference<TableIdentifierConfig>() {})
                     .noDefaultValue()
                     .withDescription("Debezium record table filter.");
 
@@ -103,6 +101,15 @@ public class KafkaSourceOptions extends KafkaBaseOptions {
                     .defaultValue(10000L)
                     .withDescription("The interval for poll message");
 
+    public static final Option<Boolean> IGNORE_NO_LEADER_PARTITION =
+            Options.key("ignore_no_leader_partition")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription(
+                            "Whether to ignore partitions that have no leader. "
+                                    + "If set to true, partitions without a leader will be skipped during partition discovery. "
+                                    + "If set to false (default), the connector will include all partitions regardless of leader status.");
+
     public static final Option<MessageFormatErrorHandleWay> MESSAGE_FORMAT_ERROR_HANDLE_WAY_OPTION =
             Options.key("format_error_handle_way")
                     .enumType(MessageFormatErrorHandleWay.class)
@@ -111,4 +118,20 @@ public class KafkaSourceOptions extends KafkaBaseOptions {
                             "The processing method of data format error. The default value is fail, and the optional value is (fail, skip). "
                                     + "When fail is selected, data format error will block and an exception will be thrown. "
                                     + "When skip is selected, data format error will skip this line data.");
+
+    public static final Option<Long> START_MODE_END_TIMESTAMP =
+            Options.key("start_mode.end_timestamp")
+                    .longType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "The time required for consumption mode to be timestamp.The endTimestamp configuration specifies the end timestamp of the messages and is only applicable in batch mode");
+
+    public static final Option<Boolean> STRIP_SCHEMA_REGISTRY_HEADER =
+            Options.key("strip_schema_registry_header")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription(
+                            "Whether to strip the Confluent Schema Registry wire format header "
+                                    + "(magic byte, schema id and message indexes) before "
+                                    + "protobuf deserialization.");
 }

@@ -26,12 +26,13 @@ import org.apache.seatunnel.common.exception.CommonErrorCodeDeprecated;
 import org.apache.seatunnel.common.utils.DateTimeUtils;
 import org.apache.seatunnel.common.utils.DateUtils;
 import org.apache.seatunnel.common.utils.TimeUtils;
-import org.apache.seatunnel.connectors.seatunnel.file.config.BaseSourceConfigOptions;
 import org.apache.seatunnel.connectors.seatunnel.file.config.ExcelEngine;
+import org.apache.seatunnel.connectors.seatunnel.file.config.FileBaseSourceOptions;
 import org.apache.seatunnel.connectors.seatunnel.file.config.FileFormat;
 import org.apache.seatunnel.connectors.seatunnel.file.excel.ExcelCellUtils;
 import org.apache.seatunnel.connectors.seatunnel.file.excel.ExcelReaderListener;
 import org.apache.seatunnel.connectors.seatunnel.file.exception.FileConnectorException;
+import org.apache.seatunnel.connectors.seatunnel.file.source.split.FileSourceSplit;
 
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.Cell;
@@ -77,36 +78,36 @@ public class ExcelReadStrategy extends AbstractReadStrategy {
     @Override
     public void read(String path, String tableId, Collector<SeaTunnelRow> output) {
         Map<String, String> partitionsMap = parsePartitionsByPath(path);
-        resolveArchiveCompressedInputStream(path, tableId, output, partitionsMap, FileFormat.EXCEL);
+        resolveArchiveCompressedInputStream(
+                new FileSourceSplit(tableId, path), output, partitionsMap, FileFormat.EXCEL);
     }
 
     @Override
     protected void readProcess(
-            String path,
-            String tableId,
+            FileSourceSplit split,
             Collector<SeaTunnelRow> output,
             InputStream inputStream,
             Map<String, String> partitionsMap,
             String currentFileName)
             throws IOException {
-
+        String tableId = split.getTableId();
         if (skipHeaderNumber > Integer.MAX_VALUE || skipHeaderNumber < Integer.MIN_VALUE) {
             throw new FileConnectorException(
                     CommonErrorCodeDeprecated.UNSUPPORTED_OPERATION,
                     "Skip the number of rows exceeds the maximum or minimum limit of Sheet");
         }
 
-        if (pluginConfig.hasPath(BaseSourceConfigOptions.DATE_FORMAT.key())) {
+        if (pluginConfig.hasPath(FileBaseSourceOptions.DATE_FORMAT_LEGACY.key())) {
             dateFormatterPattern =
-                    pluginConfig.getString(BaseSourceConfigOptions.DATE_FORMAT.key());
+                    pluginConfig.getString(FileBaseSourceOptions.DATE_FORMAT_LEGACY.key());
         }
-        if (pluginConfig.hasPath(BaseSourceConfigOptions.DATETIME_FORMAT.key())) {
+        if (pluginConfig.hasPath(FileBaseSourceOptions.DATETIME_FORMAT_LEGACY.key())) {
             dateTimeFormatterPattern =
-                    pluginConfig.getString(BaseSourceConfigOptions.DATETIME_FORMAT.key());
+                    pluginConfig.getString(FileBaseSourceOptions.DATETIME_FORMAT_LEGACY.key());
         }
-        if (pluginConfig.hasPath(BaseSourceConfigOptions.TIME_FORMAT.key())) {
+        if (pluginConfig.hasPath(FileBaseSourceOptions.TIME_FORMAT_LEGACY.key())) {
             timeFormatterPattern =
-                    pluginConfig.getString(BaseSourceConfigOptions.TIME_FORMAT.key());
+                    pluginConfig.getString(FileBaseSourceOptions.TIME_FORMAT_LEGACY.key());
         }
 
         ExcelCellUtils excelCellUtils =
@@ -116,9 +117,9 @@ public class ExcelReadStrategy extends AbstractReadStrategy {
                         dateTimeFormatterPattern,
                         timeFormatterPattern);
 
-        if (pluginConfig.hasPath(BaseSourceConfigOptions.EXCEL_ENGINE.key())
+        if (pluginConfig.hasPath(FileBaseSourceOptions.EXCEL_ENGINE.key())
                 && pluginConfig
-                        .getString(BaseSourceConfigOptions.EXCEL_ENGINE.key())
+                        .getString(FileBaseSourceOptions.EXCEL_ENGINE.key())
                         .equals(ExcelEngine.EASY_EXCEL.getExcelEngineName())) {
             log.info("Parsing Excel with EasyExcel");
 
@@ -127,8 +128,8 @@ public class ExcelReadStrategy extends AbstractReadStrategy {
                             inputStream,
                             new ExcelReaderListener(
                                     tableId, output, excelCellUtils, seaTunnelRowType));
-            if (pluginConfig.hasPath(BaseSourceConfigOptions.SHEET_NAME.key())) {
-                read.sheet(pluginConfig.getString(BaseSourceConfigOptions.SHEET_NAME.key()))
+            if (pluginConfig.hasPath(FileBaseSourceOptions.SHEET_NAME.key())) {
+                read.sheet(pluginConfig.getString(FileBaseSourceOptions.SHEET_NAME.key()))
                         .headRowNumber((int) skipHeaderNumber)
                         .doReadSync();
             } else {
@@ -152,21 +153,26 @@ public class ExcelReadStrategy extends AbstractReadStrategy {
             }
             DataFormatter formatter = new DataFormatter();
             Sheet sheet =
-                    pluginConfig.hasPath(BaseSourceConfigOptions.SHEET_NAME.key())
+                    pluginConfig.hasPath(FileBaseSourceOptions.SHEET_NAME.key())
                             ? workbook.getSheet(
-                                    pluginConfig.getString(
-                                            BaseSourceConfigOptions.SHEET_NAME.key()))
+                                    pluginConfig.getString(FileBaseSourceOptions.SHEET_NAME.key()))
                             : workbook.getSheetAt(0);
             cellCount = seaTunnelRowType.getTotalFields();
             cellCount = partitionsMap.isEmpty() ? cellCount : cellCount + partitionsMap.size();
             SeaTunnelDataType<?>[] fieldTypes = seaTunnelRowType.getFieldTypes();
-            int rowCount = sheet.getPhysicalNumberOfRows();
-            if (skipHeaderNumber > rowCount) {
+            int firstRowNum = sheet.getFirstRowNum();
+            int lastRowNum = sheet.getLastRowNum();
+            if (firstRowNum == -1 || lastRowNum == -1) {
+                return;
+            }
+            // Calculate the actual start row considering skipHeaderNumber
+            int startRow = Math.max(firstRowNum + (int) skipHeaderNumber, firstRowNum);
+            if (startRow > lastRowNum) {
                 throw new FileConnectorException(
                         CommonErrorCodeDeprecated.UNSUPPORTED_OPERATION,
                         "Skip the number of rows exceeds the maximum or minimum limit of Sheet");
             }
-            IntStream.range((int) skipHeaderNumber, rowCount)
+            IntStream.range(startRow, lastRowNum + 1)
                     .mapToObj(sheet::getRow)
                     .filter(Objects::nonNull)
                     .forEach(
@@ -212,10 +218,11 @@ public class ExcelReadStrategy extends AbstractReadStrategy {
                     CommonErrorCodeDeprecated.UNSUPPORTED_OPERATION,
                     "Schema information is not set or incorrect Schema settings");
         }
+        String partitionPath = getPathForPartitionInference(null);
         SeaTunnelRowType userDefinedRowTypeWithPartition =
-                mergePartitionTypes(fileNames.get(0), rowType);
+                mergePartitionTypes(partitionPath, rowType);
         // column projection
-        if (pluginConfig.hasPath(BaseSourceConfigOptions.READ_COLUMNS.key())) {
+        if (pluginConfig.hasPath(FileBaseSourceOptions.READ_COLUMNS.key())) {
             // get the read column index from user-defined row type
             indexes = new int[readColumns.size()];
             String[] fields = new String[readColumns.size()];
@@ -227,7 +234,7 @@ public class ExcelReadStrategy extends AbstractReadStrategy {
             }
             this.seaTunnelRowType = new SeaTunnelRowType(fields, types);
             this.seaTunnelRowTypeWithPartition =
-                    mergePartitionTypes(fileNames.get(0), this.seaTunnelRowType);
+                    mergePartitionTypes(partitionPath, this.seaTunnelRowType);
         } else {
             this.seaTunnelRowType = rowType;
             this.seaTunnelRowTypeWithPartition = userDefinedRowTypeWithPartition;

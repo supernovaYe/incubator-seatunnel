@@ -29,8 +29,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.RESUME_TOKEN_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.TIMESTAMP_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.RESUME_TOKEN_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.TIMESTAMP_FIELD;
 import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.MongodbRecordUtils.maximumBsonTimestamp;
 import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.ResumeToken.decodeTimestamp;
 
@@ -59,6 +59,12 @@ public class ChangeStreamOffset extends Offset {
         offsetMap.put(TIMESTAMP_FIELD, String.valueOf(timestamp.getValue()));
         offsetMap.put(RESUME_TOKEN_FIELD, null);
         this.offset = offsetMap;
+    }
+
+    public void updatePosition(BsonDocument resumeToken) {
+        Objects.requireNonNull(resumeToken);
+        offset.put(TIMESTAMP_FIELD, String.valueOf(decodeTimestamp(resumeToken).getValue()));
+        offset.put(RESUME_TOKEN_FIELD, resumeToken.toJson());
     }
 
     @Nullable public BsonDocument getResumeToken() {

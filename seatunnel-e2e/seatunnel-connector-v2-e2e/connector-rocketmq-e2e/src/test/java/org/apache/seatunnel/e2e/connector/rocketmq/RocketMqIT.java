@@ -49,7 +49,10 @@ import org.apache.rocketmq.common.admin.TopicOffset;
 import org.apache.rocketmq.common.message.Message;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.common.protocol.route.QueueData;
+import org.apache.rocketmq.common.protocol.route.TopicRouteData;
 import org.apache.rocketmq.remoting.protocol.LanguageCode;
+import org.apache.rocketmq.tools.admin.DefaultMQAdminExt;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
@@ -77,6 +80,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import static org.apache.seatunnel.e2e.connector.rocketmq.RocketMqContainer.NAMESRV_PORT;
 
@@ -205,6 +209,42 @@ public class RocketMqIT extends TestSuiteBase implements TestResource {
     }
 
     @TestTemplate
+    public void testSourceRocketMqTextTagToConsole(TestContainer container)
+            throws IOException, InterruptedException {
+        String topic = "test_topic_text_tag";
+        String tag = "tag_test";
+
+        // delete topic if exist
+        deleteTopicIfExist(topic);
+
+        DefaultSeaTunnelRowSerializer serializer =
+                new DefaultSeaTunnelRowSerializer(
+                        topic, tag, SEATUNNEL_ROW_TYPE, SchemaFormat.TEXT, DEFAULT_FIELD_DELIMITER);
+        generateTestData(serializer::serializeRow, topic, 0, 32);
+        Container.ExecResult execResult =
+                container.executeJob("/rocketmq-source_text_tag_to_console.conf");
+        Assertions.assertEquals(0, execResult.getExitCode(), execResult.getStderr());
+    }
+
+    @TestTemplate
+    public void testSourceRocketMqTextErrorTagToConsole(TestContainer container)
+            throws IOException, InterruptedException {
+        String topic = "test_topic_text_error_tag";
+        String tag = "test_error_tag";
+
+        // delete topic if exist
+        deleteTopicIfExist(topic);
+
+        DefaultSeaTunnelRowSerializer serializer =
+                new DefaultSeaTunnelRowSerializer(
+                        topic, tag, SEATUNNEL_ROW_TYPE, SchemaFormat.TEXT, DEFAULT_FIELD_DELIMITER);
+        generateTestData(serializer::serializeRow, topic, 0, 32);
+        Container.ExecResult execResult =
+                container.executeJob("/rocketmq-source_text_error_tag_to_console.conf");
+        Assertions.assertEquals(0, execResult.getExitCode(), execResult.getStderr());
+    }
+
+    @TestTemplate
     public void testSourceRocketMqTextToConsole(TestContainer container)
             throws IOException, InterruptedException {
         DefaultSeaTunnelRowSerializer serializer =
@@ -255,6 +295,50 @@ public class RocketMqIT extends TestSuiteBase implements TestResource {
         generateTestData(row -> serializer.serializeRow(row), "test_topic_json", 0, 100);
         Container.ExecResult execResult =
                 container.executeJob("/rocketmq-source_json_to_console.conf");
+        Assertions.assertEquals(0, execResult.getExitCode(), execResult.getStderr());
+    }
+
+    @DisabledOnContainer(
+            value = {},
+            type = {EngineType.SPARK, EngineType.FLINK},
+            disabledReason = "The multi-catalog does not currently support the Spark Flink engine")
+    @TestTemplate
+    public void testSourceRocketMqMultiTableToAssert(TestContainer container)
+            throws IOException, InterruptedException {
+        String topicA = "test_topic_multi_a";
+        String topicB = "test_topic_multi_b";
+
+        // topicA: 5 messages without tag (ids 0-4).
+        // The conf sets global start.mode=CONSUME_FROM_LAST_OFFSET but overrides topicA to
+        // CONSUME_FROM_FIRST_OFFSET, so all 5 pre-written messages must be consumed.
+        DefaultSeaTunnelRowSerializer serializerA =
+                new DefaultSeaTunnelRowSerializer(
+                        topicA, null, SEATUNNEL_ROW_TYPE, DEFAULT_FORMAT, DEFAULT_FIELD_DELIMITER);
+        generateTestData(serializerA::serializeRow, topicA, 0, 5);
+
+        // topicB: 3 messages with "tag_b" (ids 100-102) + 4 messages with "other_tag" (ids
+        // 103-106).
+        // The conf overrides topicB to CONSUME_FROM_FIRST_OFFSET and filters by tags="tag_b",
+        // so exactly 3 messages must be consumed; other_tag messages are dropped.
+        DefaultSeaTunnelRowSerializer serializerB =
+                new DefaultSeaTunnelRowSerializer(
+                        topicB,
+                        "tag_b",
+                        SEATUNNEL_ROW_TYPE,
+                        DEFAULT_FORMAT,
+                        DEFAULT_FIELD_DELIMITER);
+        DefaultSeaTunnelRowSerializer serializerBOther =
+                new DefaultSeaTunnelRowSerializer(
+                        topicB,
+                        "other_tag",
+                        SEATUNNEL_ROW_TYPE,
+                        DEFAULT_FORMAT,
+                        DEFAULT_FIELD_DELIMITER);
+        generateTestData(serializerB::serializeRow, topicB, 100, 103);
+        generateTestData(serializerBOther::serializeRow, topicB, 103, 107);
+
+        Container.ExecResult execResult =
+                container.executeJob("/multiTableIT/rocketmq_multi_source_to_assert.conf");
         Assertions.assertEquals(0, execResult.getExitCode(), execResult.getStderr());
     }
 
@@ -457,5 +541,33 @@ public class RocketMqIT extends TestSuiteBase implements TestResource {
 
     interface ProducerRecordConverter {
         Message convert(SeaTunnelRow row);
+    }
+
+    private void deleteTopicIfExist(String topicName) {
+        DefaultMQAdminExt admin = new DefaultMQAdminExt();
+        admin.setInstanceName(UUID.randomUUID().toString());
+        try {
+            admin.start();
+            TopicRouteData topicRouteData = admin.examineTopicRouteInfo(topicName);
+            if (topicRouteData != null
+                    && topicRouteData.getQueueDatas() != null
+                    && !topicRouteData.getQueueDatas().isEmpty()) {
+                Set<String> brokerNames =
+                        topicRouteData.getQueueDatas().stream()
+                                .map(QueueData::getBrokerName)
+                                .collect(Collectors.toSet());
+                admin.deleteTopicInBroker(brokerNames, topicName);
+                admin.deleteTopicInNameServer(brokerNames, topicName, "delete_topic");
+                log.info("Deleted topic: {}", topicName);
+            } else {
+                log.info("Topic {} does not exist", topicName);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to delete topic {}: {}", topicName, e.getMessage());
+        } finally {
+            if (admin != null) {
+                admin.shutdown();
+            }
+        }
     }
 }

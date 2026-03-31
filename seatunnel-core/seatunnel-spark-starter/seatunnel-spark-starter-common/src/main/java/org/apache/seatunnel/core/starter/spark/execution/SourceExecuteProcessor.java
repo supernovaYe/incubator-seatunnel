@@ -21,10 +21,10 @@ import org.apache.seatunnel.shade.com.google.common.collect.Lists;
 import org.apache.seatunnel.shade.com.typesafe.config.Config;
 import org.apache.seatunnel.shade.com.typesafe.config.ConfigValue;
 
-import org.apache.seatunnel.api.common.CommonOptions;
 import org.apache.seatunnel.api.common.JobContext;
 import org.apache.seatunnel.api.common.PluginIdentifier;
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
+import org.apache.seatunnel.api.options.EnvCommonOptions;
 import org.apache.seatunnel.api.source.SeaTunnelSource;
 import org.apache.seatunnel.api.source.SourceSplit;
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
@@ -52,8 +52,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 
-import static org.apache.seatunnel.api.common.CommonOptions.PLUGIN_NAME;
-import static org.apache.seatunnel.api.common.CommonOptions.PLUGIN_OUTPUT;
+import static org.apache.seatunnel.api.options.ConnectorCommonOptions.PLUGIN_NAME;
+import static org.apache.seatunnel.api.options.ConnectorCommonOptions.PLUGIN_OUTPUT;
 import static org.apache.seatunnel.api.table.factory.FactoryUtil.ensureJobModeMatch;
 
 @SuppressWarnings("rawtypes")
@@ -82,22 +82,22 @@ public class SourceExecuteProcessor extends SparkAbstractPluginExecuteProcessor<
             SeaTunnelSource<?, ?, ?> source = sourceTableInfo.getSource();
             Config pluginConfig = pluginConfigs.get(i);
             int parallelism;
-            if (pluginConfig.hasPath(CommonOptions.PARALLELISM.key())) {
-                parallelism = pluginConfig.getInt(CommonOptions.PARALLELISM.key());
+            if (pluginConfig.hasPath(EnvCommonOptions.PARALLELISM.key())) {
+                parallelism = pluginConfig.getInt(EnvCommonOptions.PARALLELISM.key());
             } else {
                 parallelism =
                         sparkRuntimeEnvironment
                                 .getSparkConf()
                                 .getInt(
-                                        CommonOptions.PARALLELISM.key(),
-                                        CommonOptions.PARALLELISM.defaultValue());
+                                        EnvCommonOptions.PARALLELISM.key(),
+                                        EnvCommonOptions.PARALLELISM.defaultValue());
             }
+            envOption.put(EnvCommonOptions.PARALLELISM.key(), String.valueOf(parallelism));
             Dataset<Row> dataset =
                     sparkRuntimeEnvironment
                             .getSparkSession()
                             .read()
                             .format(SeaTunnelSource.class.getSimpleName())
-                            .option(CommonOptions.PARALLELISM.key(), parallelism)
                             .option(
                                     Constants.SOURCE_SERIALIZATION,
                                     SerializationUtils.objectToString(source))
@@ -129,14 +129,16 @@ public class SourceExecuteProcessor extends SparkAbstractPluginExecuteProcessor<
                             PluginType.SOURCE.getType(),
                             sourceConfig.getString(PLUGIN_NAME.key()));
             jars.addAll(
-                    sourcePluginDiscovery.getPluginJarPaths(Lists.newArrayList(pluginIdentifier)));
+                    sourcePluginDiscovery.getPluginJarAndDependencyPaths(
+                            Lists.newArrayList(pluginIdentifier)));
             Tuple2<SeaTunnelSource<Object, SourceSplit, Serializable>, List<CatalogTable>> source =
                     FactoryUtil.createAndPrepareSource(
                             ReadonlyConfig.fromConfig(sourceConfig),
                             classLoader,
                             pluginIdentifier.getPluginName(),
                             fallbackCreateSource,
-                            null);
+                            null,
+                            envOption == null ? null : ReadonlyConfig.fromMap(envOption));
 
             source._1().setJobContext(jobContext);
             ensureJobModeMatch(jobContext, source._1());

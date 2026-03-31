@@ -30,6 +30,7 @@ import com.google.auto.service.AutoService;
 
 import java.util.List;
 
+import static org.apache.seatunnel.api.options.SinkConnectorCommonOptions.MULTI_TABLE_SINK_REPLICA;
 import static org.apache.seatunnel.shade.com.google.common.base.Preconditions.checkArgument;
 
 @AutoService(Factory.class)
@@ -39,6 +40,9 @@ public class InMemorySinkFactory
 
     public static final Option<Boolean> THROW_EXCEPTION =
             Options.key("throw_exception").booleanType().defaultValue(false);
+
+    public static final Option<Boolean> WRITER_SLEEP =
+            Options.key("writer_sleep").booleanType().defaultValue(false);
 
     public static final Option<Boolean> THROW_OUT_OF_MEMORY =
             Options.key("throw_out_of_memory").booleanType().defaultValue(false);
@@ -66,10 +70,12 @@ public class InMemorySinkFactory
                 .optional(
                         THROW_EXCEPTION,
                         THROW_OUT_OF_MEMORY,
+                        WRITER_SLEEP,
                         CHECKPOINT_SLEEP,
                         THROW_EXCEPTION_OF_COMMITTER,
                         ASSERT_OPTIONS_KEY,
-                        ASSERT_OPTIONS_VALUE)
+                        ASSERT_OPTIONS_VALUE,
+                        MULTI_TABLE_SINK_REPLICA)
                 .build();
     }
 

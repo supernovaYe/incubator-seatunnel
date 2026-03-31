@@ -17,13 +17,13 @@
 
 package org.apache.seatunnel.connectors.seatunnel.starrocks.sink;
 
+import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
+
 import org.apache.seatunnel.api.table.catalog.Column;
 import org.apache.seatunnel.api.table.type.ArrayType;
 import org.apache.seatunnel.api.table.type.DecimalType;
 import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
 import org.apache.seatunnel.connectors.seatunnel.common.util.CatalogUtil;
-
-import org.apache.commons.lang3.StringUtils;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -36,12 +36,19 @@ public class StarRocksSaveModeUtil extends CatalogUtil {
 
     public String columnToConnectorType(Column column) {
         checkNotNull(column, "The column is required.");
+        String columnType;
+        if (column.getSinkType() != null) {
+            columnType = column.getSinkType();
+        } else {
+            columnType =
+                    dataTypeToStarrocksType(
+                            column.getDataType(),
+                            column.getColumnLength() == null ? 0 : column.getColumnLength());
+        }
         return String.format(
                 "`%s` %s %s %s",
                 column.getName(),
-                dataTypeToStarrocksType(
-                        column.getDataType(),
-                        column.getColumnLength() == null ? 0 : column.getColumnLength()),
+                columnType,
                 column.isNullable() ? "NULL" : "NOT NULL",
                 StringUtils.isEmpty(column.getComment())
                         ? ""

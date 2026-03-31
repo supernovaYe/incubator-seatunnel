@@ -33,6 +33,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.Map;
 
@@ -61,6 +62,7 @@ public class TextFormatSchemaTest {
                     + '\003'
                     + "1231"
                     + "\001"
+                    + " \001"
                     + "tyrantlucifer\001"
                     + "true\001"
                     + "1\001"
@@ -88,6 +90,7 @@ public class TextFormatSchemaTest {
                         new String[] {
                             "array_field",
                             "map_field",
+                            "null_string_field",
                             "string_field",
                             "boolean_field",
                             "tinyint_field",
@@ -107,6 +110,7 @@ public class TextFormatSchemaTest {
                         new SeaTunnelDataType<?>[] {
                             ArrayType.INT_ARRAY_TYPE,
                             new MapType<>(BasicType.STRING_TYPE, BasicType.INT_TYPE),
+                            BasicType.STRING_TYPE,
                             BasicType.STRING_TYPE,
                             BasicType.BOOLEAN_TYPE,
                             BasicType.BYTE_TYPE,
@@ -149,8 +153,9 @@ public class TextFormatSchemaTest {
         Assertions.assertEquals(((Map<?, ?>) (seaTunnelRow.getField(1))).get("tyrantlucifer"), 18);
         Assertions.assertEquals(((Map<?, ?>) (seaTunnelRow.getField(1))).get("Kris"), 21);
         Assertions.assertArrayEquals(
-                (byte[]) seaTunnelRow.getField(12), "tyrantlucifer".getBytes());
-        Assertions.assertEquals(seaTunnelRow.getField(2), "tyrantlucifer");
+                (byte[]) seaTunnelRow.getField(13), "tyrantlucifer".getBytes());
+        Assertions.assertEquals(seaTunnelRow.getField(2), " ");
+        Assertions.assertEquals(seaTunnelRow.getField(3), "tyrantlucifer");
         Assertions.assertEquals(data, content);
     }
 
@@ -227,5 +232,55 @@ public class TextFormatSchemaTest {
         assertEquals(
                 "\\N\u0001\\N\u0001\\N\u0001\\N\u0001\\N\u0001\\N\u0001\\N\u0001\\N",
                 new String(textSerializationSchema.serialize(expected)));
+    }
+
+    @Test
+    public void testSerializationWithRequireEscapeCharacters() throws Exception {
+        SeaTunnelRowType rowType =
+                new SeaTunnelRowType(
+                        new String[] {"id", "name"},
+                        new SeaTunnelDataType[] {INT_TYPE, STRING_TYPE});
+        TextDeserializationSchema deserializationSchema =
+                TextDeserializationSchema.builder()
+                        .seaTunnelRowType(rowType)
+                        .delimiter("|")
+                        .build();
+
+        String content = "1|tyrantlucifer";
+        SeaTunnelRow seaTunnelRow = deserializationSchema.deserialize(content.getBytes());
+        Assertions.assertEquals(1, seaTunnelRow.getField(0));
+        Assertions.assertEquals("tyrantlucifer", seaTunnelRow.getField(1));
+    }
+
+    @Test
+    void testFormatDecimal() {
+        // test 0000.01000
+        assertEquals("0.01000", formatDecimalWithToString(new BigDecimal("0000.01000")));
+        assertEquals("0.01000", formatDecimalWithToPlainString(new BigDecimal("0000.01000")));
+        assertEquals("0.01", formatDecimal(new BigDecimal("0000.01000")));
+        // test 10.000
+        assertEquals("10.000", formatDecimalWithToString(new BigDecimal("10.000")));
+        assertEquals("10.000", formatDecimalWithToPlainString(new BigDecimal("10.000")));
+        assertEquals("10", formatDecimal(new BigDecimal("10.000")));
+        // test 1E-15
+        assertEquals("1E-15", formatDecimalWithToString(new BigDecimal("1E-15")));
+        assertEquals("0.000000000000001", formatDecimalWithToPlainString(new BigDecimal("1E-15")));
+        assertEquals("0.000000000000001", formatDecimal(new BigDecimal("1E-15")));
+        // test 0E-15
+        assertEquals("0E-15", formatDecimalWithToString(new BigDecimal("0E-15")));
+        assertEquals("0.000000000000000", formatDecimalWithToPlainString(new BigDecimal("0E-15")));
+        assertEquals("0", formatDecimal(new BigDecimal("0E-15")));
+    }
+
+    private String formatDecimal(BigDecimal bd) {
+        return bd.stripTrailingZeros().toPlainString();
+    }
+
+    private String formatDecimalWithToString(BigDecimal bd) {
+        return bd.toString();
+    }
+
+    private String formatDecimalWithToPlainString(BigDecimal bd) {
+        return bd.toPlainString();
     }
 }

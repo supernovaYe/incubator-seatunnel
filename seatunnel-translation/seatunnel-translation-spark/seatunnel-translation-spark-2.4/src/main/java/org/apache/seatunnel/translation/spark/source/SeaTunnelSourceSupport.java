@@ -17,8 +17,9 @@
 
 package org.apache.seatunnel.translation.spark.source;
 
-import org.apache.seatunnel.api.common.CommonOptions;
-import org.apache.seatunnel.api.env.EnvCommonOptions;
+import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
+
+import org.apache.seatunnel.api.options.EnvCommonOptions;
 import org.apache.seatunnel.api.source.SeaTunnelSource;
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.catalog.CatalogTableUtil;
@@ -30,7 +31,6 @@ import org.apache.seatunnel.translation.spark.execution.MultiTableManager;
 import org.apache.seatunnel.translation.spark.source.reader.batch.BatchSourceReader;
 import org.apache.seatunnel.translation.spark.source.reader.micro.MicroBatchSourceReader;
 
-import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.spark.sql.SparkSession;
@@ -69,7 +69,7 @@ public class SeaTunnelSourceSupport
     @Override
     public DataSourceReader createReader(DataSourceOptions options) {
         SeaTunnelSource<SeaTunnelRow, ?, ?> seaTunnelSource = getSeaTunnelSource(options);
-        int parallelism = options.getInt(CommonOptions.PARALLELISM.key(), 1);
+        int parallelism = options.getInt(EnvCommonOptions.PARALLELISM.key(), 1);
         Map<String, String> envOptions = options.asMap();
         String applicationId = SparkSession.getActiveSession().get().sparkContext().applicationId();
         List<CatalogTable> catalogTables;
@@ -93,7 +93,7 @@ public class SeaTunnelSourceSupport
             String checkpointLocation,
             DataSourceOptions options) {
         SeaTunnelSource<SeaTunnelRow, ?, ?> seaTunnelSource = getSeaTunnelSource(options);
-        Integer parallelism = options.getInt(CommonOptions.PARALLELISM.key(), 1);
+        Integer parallelism = options.getInt(EnvCommonOptions.PARALLELISM.key(), 1);
         String applicationId = SparkSession.getActiveSession().get().sparkContext().applicationId();
         Integer checkpointInterval =
                 options.getInt(

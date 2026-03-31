@@ -17,22 +17,90 @@
 package org.apache.seatunnel.transform.sql.zeta.functions;
 
 import org.apache.seatunnel.api.table.type.ArrayType;
+import org.apache.seatunnel.api.table.type.BasicType;
+import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
 import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
+import org.apache.seatunnel.common.exception.CommonErrorCode;
 import org.apache.seatunnel.common.utils.SeaTunnelException;
+import org.apache.seatunnel.transform.exception.TransformException;
 
-import net.sf.jsqlparser.expression.DoubleValue;
 import net.sf.jsqlparser.expression.Expression;
 import net.sf.jsqlparser.expression.Function;
-import net.sf.jsqlparser.expression.LongValue;
-import net.sf.jsqlparser.expression.NullValue;
-import net.sf.jsqlparser.expression.StringValue;
-import net.sf.jsqlparser.expression.operators.relational.ExpressionList;
-import net.sf.jsqlparser.schema.Column;
 
-import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 public class ArrayFunction {
+
+    public static Object arrayMax(List<Object> args) {
+        if (args == null || args.isEmpty()) {
+            return null;
+        }
+        Object[] dataList = (Object[]) args.get(0);
+        if (dataList == null || dataList.length == 0) {
+            return null;
+        }
+        Object firstNonNullValue =
+                Arrays.stream(dataList).filter(Objects::nonNull).findFirst().orElse(null);
+        if (firstNonNullValue == null) {
+            return null;
+        }
+        if (firstNonNullValue instanceof String) {
+            return Arrays.stream(dataList)
+                    .filter(Objects::nonNull)
+                    .map(String.class::cast)
+                    .max(String::compareTo)
+                    .orElse(null);
+        } else if (firstNonNullValue instanceof Number) {
+            return Arrays.stream(dataList)
+                    .filter(Objects::nonNull)
+                    .map(Number.class::cast)
+                    .max(Comparator.comparingDouble(Number::doubleValue))
+                    .orElse(null);
+        }
+        Map<String, String> params = new HashMap<>();
+        params.put("identifier", "ArrayFunction");
+        params.put("dataType", firstNonNullValue.getClass().getName());
+        params.put("field", "ARRAY_MAX");
+        throw new TransformException(CommonErrorCode.UNSUPPORTED_DATA_TYPE, params);
+    }
+
+    public static Object arrayMin(List<Object> args) {
+        if (args == null || args.isEmpty()) {
+            return null;
+        }
+        Object[] dataList = (Object[]) args.get(0);
+        if (dataList == null || dataList.length == 0) {
+            return null;
+        }
+        Object firstNonNullValue =
+                Arrays.stream(dataList).filter(Objects::nonNull).findFirst().orElse(null);
+        if (firstNonNullValue == null) {
+            return null;
+        }
+        if (firstNonNullValue instanceof String) {
+            return Arrays.stream(dataList)
+                    .filter(Objects::nonNull)
+                    .map(String.class::cast)
+                    .min(String::compareTo)
+                    .orElse(null);
+        } else if (firstNonNullValue instanceof Number) {
+            return Arrays.stream(dataList)
+                    .filter(Objects::nonNull)
+                    .map(Number.class::cast)
+                    .min(Comparator.comparingDouble(Number::doubleValue))
+                    .orElse(null);
+        }
+        Map<String, String> params = new HashMap<>();
+        params.put("identifier", "ArrayFunction");
+        params.put("dataType", firstNonNullValue.getClass().getName());
+        params.put("field", "ARRAY_MIN");
+        throw new TransformException(CommonErrorCode.UNSUPPORTED_DATA_TYPE, params);
+    }
 
     public static Object[] array(List<Object> args) {
         if (args == null || args.isEmpty()) {
@@ -48,36 +116,27 @@ public class ArrayFunction {
     }
 
     public static ArrayType castArrayTypeMapping(Function function, SeaTunnelRowType inputRowType) {
-        return castArrayTypeMapping(getFunctionArgs(function, inputRowType));
-    }
+        List<Expression> expressions = CommonFunction.getExpressions(function);
 
-    public static ArrayType castArrayTypeMapping(List<Class<?>> args) {
-        if (args == null || args.isEmpty()) {
+        if (expressions.isEmpty()) {
             return ArrayType.STRING_ARRAY_TYPE;
         }
 
-        Class<?> arrayType = getClassType(args);
-        return getSeaTunnelDataType(arrayType);
+        SeaTunnelDataType<?> elementType = null;
+        for (Expression expression : expressions) {
+            SeaTunnelDataType<?> t = CommonFunction.resolveExpressionType(expression, inputRowType);
+            elementType = CommonFunction.unifyCollectionType(elementType, t);
+        }
+        if (elementType == null) {
+            elementType = BasicType.STRING_TYPE;
+        }
+        return createArrayType(elementType);
     }
 
-    private static ArrayType getSeaTunnelDataType(Class<?> clazz) {
-        String className = clazz.getSimpleName();
-        switch (className) {
-            case "Integer":
-                return ArrayType.INT_ARRAY_TYPE;
-            case "Double":
-                return ArrayType.DOUBLE_ARRAY_TYPE;
-            case "Boolean":
-                return ArrayType.BOOLEAN_ARRAY_TYPE;
-            case "Long":
-                return ArrayType.LONG_ARRAY_TYPE;
-            case "float":
-                return ArrayType.FLOAT_ARRAY_TYPE;
-            case "short":
-                return ArrayType.SHORT_ARRAY_TYPE;
-            default:
-                return ArrayType.STRING_ARRAY_TYPE;
-        }
+    static ArrayType createArrayType(SeaTunnelDataType<?> elementType) {
+        if (elementType == BasicType.BYTE_TYPE || elementType == BasicType.VOID_TYPE)
+            return ArrayType.STRING_ARRAY_TYPE;
+        return ArrayType.of(elementType);
     }
 
     private static Class<?> getArrayType(Class<?> type1, Class<?> type2) {
@@ -120,21 +179,6 @@ public class ArrayFunction {
         return String.class;
     }
 
-    private static Class<?> getClassType(List<Class<?>> args) {
-        Class<?> arrayType = null;
-        for (Class<?> obj : args) {
-            if (obj == null) {
-                continue;
-            }
-            if (arrayType == null) {
-                arrayType = obj;
-            } else {
-                arrayType = getArrayType(arrayType, obj);
-            }
-        }
-        return arrayType == null ? String.class : arrayType;
-    }
-
     private static Class<?> getDataClassType(List<Object> args) {
         Class<?> arrayType = null;
         for (Object obj : args) {
@@ -150,44 +194,13 @@ public class ArrayFunction {
         return arrayType == null ? String.class : arrayType;
     }
 
-    private static List<Class<?>> getFunctionArgs(
+    public static SeaTunnelDataType<?> getElementType(
             Function function, SeaTunnelRowType inputRowType) {
-        ExpressionList<Expression> expressionList =
-                (ExpressionList<Expression>) function.getParameters();
-        List<Class<?>> functionArgs = new ArrayList<>();
-        if (expressionList != null) {
-            for (Expression expression : expressionList.getExpressions()) {
-                if (expression instanceof NullValue) {
-                    functionArgs.add(null);
-                    continue;
-                }
-                if (expression instanceof DoubleValue) {
-                    functionArgs.add(Double.class);
-                    continue;
-                }
-                if (expression instanceof Column) {
-                    int columnIndex = inputRowType.indexOf(((Column) expression).getColumnName());
-                    functionArgs.add(inputRowType.getFieldType(columnIndex).getTypeClass());
-                    continue;
-                }
-
-                if (expression instanceof LongValue) {
-                    long longVal = ((LongValue) expression).getValue();
-                    if (longVal <= Integer.MAX_VALUE && longVal >= Integer.MIN_VALUE) {
-                        functionArgs.add(Integer.class);
-                    } else {
-                        functionArgs.add(Long.class);
-                    }
-                    continue;
-                }
-                if (expression instanceof StringValue) {
-                    functionArgs.add(String.class);
-                    continue;
-                }
-                throw new SeaTunnelException("unSupport expression： " + expression.toString());
-            }
-        }
-        return functionArgs;
+        List<Expression> expressions = CommonFunction.getExpressions(function);
+        String columnName = expressions.get(0).toString();
+        int columnIndex = inputRowType.indexOf(columnName);
+        ArrayType arrayType = (ArrayType) inputRowType.getFieldType(columnIndex);
+        return arrayType.getElementType();
     }
 
     private static Object convertToType(Object obj, Class<?> targetType) {

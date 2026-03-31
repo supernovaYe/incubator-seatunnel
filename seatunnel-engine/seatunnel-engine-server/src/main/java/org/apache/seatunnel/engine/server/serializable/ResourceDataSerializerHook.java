@@ -18,7 +18,9 @@
 package org.apache.seatunnel.engine.server.serializable;
 
 import org.apache.seatunnel.engine.common.serializeable.SeaTunnelFactoryIdConstant;
+import org.apache.seatunnel.engine.server.master.cleanup.PipelineCleanupRecord;
 import org.apache.seatunnel.engine.server.resourcemanager.opeartion.GetOverviewOperation;
+import org.apache.seatunnel.engine.server.resourcemanager.opeartion.GetPendingJobsOperation;
 import org.apache.seatunnel.engine.server.resourcemanager.opeartion.ReleaseSlotOperation;
 import org.apache.seatunnel.engine.server.resourcemanager.opeartion.RequestSlotOperation;
 import org.apache.seatunnel.engine.server.resourcemanager.opeartion.ResetResourceOperation;
@@ -52,6 +54,10 @@ public class ResourceDataSerializerHook implements DataSerializerHook {
     public static final int SYNC_SLOT_SERVICE_STATUS_TYPE = 8;
 
     public static final int REQUEST_SLOT_INFO_TYPE = 9;
+
+    public static final int GET_PENDING_JOBS_TYPE = 10;
+
+    public static final int PIPELINE_CLEANUP_RECORD_TYPE = 11;
 
     public static final int FACTORY_ID =
             FactoryIdHelper.getFactoryId(
@@ -91,6 +97,10 @@ public class ResourceDataSerializerHook implements DataSerializerHook {
                     return new SyncWorkerProfileOperation();
                 case REQUEST_SLOT_INFO_TYPE:
                     return new GetOverviewOperation();
+                case GET_PENDING_JOBS_TYPE:
+                    return new GetPendingJobsOperation();
+                case PIPELINE_CLEANUP_RECORD_TYPE:
+                    return new PipelineCleanupRecord();
                 default:
                     throw new IllegalArgumentException("Unknown type id " + typeId);
             }

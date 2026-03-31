@@ -17,17 +17,18 @@
 
 package org.apache.seatunnel.api.table.factory;
 
-import org.apache.seatunnel.api.common.CommonOptions;
 import org.apache.seatunnel.api.common.JobContext;
 import org.apache.seatunnel.api.common.PluginIdentifier;
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.api.configuration.util.ConfigValidator;
 import org.apache.seatunnel.api.configuration.util.OptionRule;
 import org.apache.seatunnel.api.env.ParsingMode;
+import org.apache.seatunnel.api.options.ConnectorCommonOptions;
+import org.apache.seatunnel.api.options.EnvCommonOptions;
+import org.apache.seatunnel.api.options.SourceConnectorCommonOptions;
 import org.apache.seatunnel.api.sink.SeaTunnelSink;
 import org.apache.seatunnel.api.sink.multitablesink.MultiTableSinkFactory;
 import org.apache.seatunnel.api.source.SeaTunnelSource;
-import org.apache.seatunnel.api.source.SourceOptions;
 import org.apache.seatunnel.api.source.SourceSplit;
 import org.apache.seatunnel.api.source.SupportParallelism;
 import org.apache.seatunnel.api.table.catalog.Catalog;
@@ -62,7 +63,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import static org.apache.seatunnel.api.common.CommonOptions.PLUGIN_NAME;
+import static org.apache.seatunnel.api.options.ConnectorCommonOptions.PLUGIN_NAME;
 
 /**
  * Use SPI to create {@link TableSourceFactory}, {@link TableSinkFactory} and {@link
@@ -81,9 +82,16 @@ public final class FactoryUtil {
                     ClassLoader classLoader,
                     String factoryIdentifier,
                     Function<PluginIdentifier, SeaTunnelSource> fallbackCreateSource,
-                    TableSourceFactory factory) {
+                    TableSourceFactory factory,
+                    ReadonlyConfig envOptions) {
         return restoreAndPrepareSource(
-                options, classLoader, factoryIdentifier, null, fallbackCreateSource, factory);
+                options,
+                classLoader,
+                factoryIdentifier,
+                null,
+                fallbackCreateSource,
+                factory,
+                envOptions);
     }
 
     public static <T, SplitT extends SourceSplit, StateT extends Serializable>
@@ -93,7 +101,8 @@ public final class FactoryUtil {
                     String factoryIdentifier,
                     ChangeStreamTableSourceCheckpoint checkpoint,
                     Function<PluginIdentifier, SeaTunnelSource> fallbackCreateSource,
-                    TableSourceFactory factory) {
+                    TableSourceFactory factory,
+                    ReadonlyConfig envOptions) {
 
         try {
 
@@ -132,7 +141,7 @@ public final class FactoryUtil {
                             restoreAndPrepareSource(
                                     changeStreamTableSourceFactory, options, classLoader, state);
                 } else {
-                    source = createAndPrepareSource(factory, options, classLoader);
+                    source = createAndPrepareSource(factory, options, classLoader, envOptions);
                 }
             }
             List<CatalogTable> catalogTables;
@@ -142,7 +151,8 @@ public final class FactoryUtil {
                 // TODO remove it when all connector use `getProducedCatalogTables`
                 SeaTunnelDataType<T> seaTunnelDataType = source.getProducedType();
                 final String tableId =
-                        options.getOptional(CommonOptions.PLUGIN_OUTPUT).orElse(DEFAULT_ID);
+                        options.getOptional(ConnectorCommonOptions.PLUGIN_OUTPUT)
+                                .orElse(DEFAULT_ID);
                 catalogTables =
                         CatalogTableUtil.convertDataTypeToCatalogTables(seaTunnelDataType, tableId);
             }
@@ -153,7 +163,8 @@ public final class FactoryUtil {
                             .map(CatalogTable::getTableId)
                             .map(TableIdentifier::toString)
                             .collect(Collectors.joining(",")));
-            if (options.get(SourceOptions.DAG_PARSING_MODE) == ParsingMode.SHARDING) {
+            if (options.get(SourceConnectorCommonOptions.DAG_PARSING_MODE)
+                    == ParsingMode.SHARDING) {
                 CatalogTable catalogTable = catalogTables.get(0);
                 catalogTables.clear();
                 catalogTables.add(catalogTable);
@@ -170,8 +181,12 @@ public final class FactoryUtil {
 
     private static <T, SplitT extends SourceSplit, StateT extends Serializable>
             SeaTunnelSource<T, SplitT, StateT> createAndPrepareSource(
-                    TableSourceFactory factory, ReadonlyConfig options, ClassLoader classLoader) {
-        TableSourceFactoryContext context = new TableSourceFactoryContext(options, classLoader);
+                    TableSourceFactory factory,
+                    ReadonlyConfig options,
+                    ClassLoader classLoader,
+                    ReadonlyConfig envOptions) {
+        TableSourceFactoryContext context =
+                new TableSourceFactoryContext(options, classLoader, envOptions);
         ConfigValidator.of(context.getOptions()).validate(factory.optionRule());
         TableSource<T, SplitT, StateT> tableSource = factory.createSource(context);
         return tableSource.createSource();
@@ -407,7 +422,7 @@ public final class FactoryUtil {
                 // SeaTunnelSource
                 || SupportParallelism.class.isAssignableFrom(sourceClass)) {
             OptionRule sourceCommonOptionRule =
-                    OptionRule.builder().optional(CommonOptions.PARALLELISM).build();
+                    OptionRule.builder().optional(EnvCommonOptions.PARALLELISM).build();
             sourceOptionRule
                     .getOptionalOptions()
                     .addAll(sourceCommonOptionRule.getOptionalOptions());

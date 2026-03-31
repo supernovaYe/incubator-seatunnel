@@ -18,12 +18,12 @@
 package org.apache.seatunnel.engine.server.master;
 
 import org.apache.seatunnel.engine.common.Constant;
+import org.apache.seatunnel.engine.common.job.JobResult;
+import org.apache.seatunnel.engine.common.job.JobStatus;
 import org.apache.seatunnel.engine.common.utils.PassiveCompletableFuture;
 import org.apache.seatunnel.engine.core.dag.logical.LogicalDag;
 import org.apache.seatunnel.engine.core.job.JobImmutableInformation;
 import org.apache.seatunnel.engine.core.job.JobInfo;
-import org.apache.seatunnel.engine.core.job.JobResult;
-import org.apache.seatunnel.engine.core.job.JobStatus;
 import org.apache.seatunnel.engine.core.job.PipelineStatus;
 import org.apache.seatunnel.engine.server.AbstractSeaTunnelServerTest;
 import org.apache.seatunnel.engine.server.TestUtils;
@@ -32,6 +32,7 @@ import org.apache.seatunnel.engine.server.checkpoint.CheckpointCoordinator;
 import org.apache.seatunnel.engine.server.dag.physical.PhysicalVertex;
 import org.apache.seatunnel.engine.server.dag.physical.PipelineLocation;
 import org.apache.seatunnel.engine.server.dag.physical.SubPlan;
+import org.apache.seatunnel.engine.server.dag.physical.UnknownPhysicalPlanException;
 import org.apache.seatunnel.engine.server.execution.TaskGroupLocation;
 import org.apache.seatunnel.engine.server.resourcemanager.resource.SlotProfile;
 import org.apache.seatunnel.engine.server.service.slot.SlotService;
@@ -248,6 +249,19 @@ public class JobMasterTest extends AbstractSeaTunnelServerTest {
         assertCloseIdleTask(jobMaster);
     }
 
+    @Test
+    void testFilteringFinishedPipelinesInPhysicalPlanGenerator() throws Exception {
+        long jobId = instance.getFlakeIdGenerator(Constant.SEATUNNEL_ID_GENERATOR_NAME).newId();
+        JobMaster jobMaster = newJobInstanceWithRunningState(jobId);
+
+        jobMaster
+                .getRunningJobStateIMap()
+                .put(new PipelineLocation(jobId, 1), PipelineStatus.FINISHED);
+        Assertions.assertThrows(
+                UnknownPhysicalPlanException.class,
+                () -> jobMaster.init(System.currentTimeMillis(), false));
+    }
+
     private void assertCloseIdleTask(JobMaster jobMaster) {
         SlotService slotService = server.getSlotService();
         Assertions.assertEquals(4, slotService.getWorkerProfile().getAssignedSlots().length);
@@ -298,8 +312,8 @@ public class JobMasterTest extends AbstractSeaTunnelServerTest {
                         jobId,
                         "Test",
                         restore,
-                        nodeEngine.getSerializationService().toData(testLogicalDag),
-                        testLogicalDag.getJobConfig(),
+                        nodeEngine.getSerializationService(),
+                        testLogicalDag,
                         Collections.emptyList(),
                         Collections.emptyList());
 

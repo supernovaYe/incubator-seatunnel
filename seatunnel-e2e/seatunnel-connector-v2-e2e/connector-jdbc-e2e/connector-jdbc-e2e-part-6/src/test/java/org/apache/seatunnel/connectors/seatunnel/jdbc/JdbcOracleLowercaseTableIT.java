@@ -19,6 +19,7 @@
 package org.apache.seatunnel.connectors.seatunnel.jdbc;
 
 import org.apache.seatunnel.shade.com.google.common.collect.Lists;
+import org.apache.seatunnel.shade.org.apache.commons.lang3.tuple.Pair;
 
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.catalog.Column;
@@ -26,8 +27,6 @@ import org.apache.seatunnel.api.table.catalog.TablePath;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.catalog.oracle.OracleCatalog;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.catalog.oracle.OracleURLParser;
-
-import org.apache.commons.lang3.tuple.Pair;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -234,7 +233,8 @@ public class JdbcOracleLowercaseTableIT extends AbstractJdbcIT {
                         jdbcCase.getUserName(),
                         jdbcCase.getPassword(),
                         OracleURLParser.parse(jdbcUrl),
-                        SCHEMA);
+                        SCHEMA,
+                        null);
         catalog.open();
     }
 
@@ -250,7 +250,8 @@ public class JdbcOracleLowercaseTableIT extends AbstractJdbcIT {
                         jdbcCase.getPassword(),
                         OracleURLParser.parse(
                                 jdbcCase.getJdbcUrl().replace(HOST, dbServer.getHost())),
-                        SCHEMA);
+                        SCHEMA,
+                        null);
         oracleCatalog.open();
         catalog.executeSql(
                 tablePathOracle,

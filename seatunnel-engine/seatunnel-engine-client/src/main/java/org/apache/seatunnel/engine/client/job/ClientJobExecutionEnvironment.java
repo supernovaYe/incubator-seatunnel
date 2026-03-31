@@ -18,11 +18,13 @@
 package org.apache.seatunnel.engine.client.job;
 
 import org.apache.seatunnel.shade.com.google.common.annotations.VisibleForTesting;
+import org.apache.seatunnel.shade.org.apache.commons.lang3.tuple.ImmutablePair;
 
 import org.apache.seatunnel.api.common.JobContext;
 import org.apache.seatunnel.engine.client.SeaTunnelHazelcastClient;
 import org.apache.seatunnel.engine.common.config.JobConfig;
 import org.apache.seatunnel.engine.common.config.SeaTunnelConfig;
+import org.apache.seatunnel.engine.common.config.server.DataSourceConfig;
 import org.apache.seatunnel.engine.core.dag.actions.Action;
 import org.apache.seatunnel.engine.core.dag.logical.LogicalDag;
 import org.apache.seatunnel.engine.core.job.AbstractJobEnvironment;
@@ -30,8 +32,6 @@ import org.apache.seatunnel.engine.core.job.ConnectorJarIdentifier;
 import org.apache.seatunnel.engine.core.job.JobImmutableInformation;
 import org.apache.seatunnel.engine.core.job.JobPipelineCheckpointData;
 import org.apache.seatunnel.engine.core.parse.MultipleTableJobConfigParser;
-
-import org.apache.commons.lang3.tuple.ImmutablePair;
 
 import java.net.URL;
 import java.util.ArrayList;
@@ -107,6 +107,7 @@ public class ClientJobExecutionEnvironment extends AbstractJobEnvironment {
                     jobClient.getCheckpointData(
                             Long.parseLong(jobConfig.getJobContext().getJobId()));
         }
+        DataSourceConfig dataSourceConfig = seaTunnelConfig.getEngineConfig().getDataSourceConfig();
         return new MultipleTableJobConfigParser(
                 jobFilePath,
                 variables,
@@ -114,7 +115,8 @@ public class ClientJobExecutionEnvironment extends AbstractJobEnvironment {
                 jobConfig,
                 commonPluginJars,
                 isStartWithSavePoint,
-                pipelineCheckpoints);
+                pipelineCheckpoints,
+                dataSourceConfig);
     }
 
     @VisibleForTesting
@@ -194,8 +196,8 @@ public class ClientJobExecutionEnvironment extends AbstractJobEnvironment {
                         Long.parseLong(jobConfig.getJobContext().getJobId()),
                         jobConfig.getName(),
                         isStartWithSavePoint,
-                        seaTunnelHazelcastClient.getSerializationService().toData(logicalDag),
-                        jobConfig,
+                        seaTunnelHazelcastClient.getSerializationService(),
+                        logicalDag,
                         new ArrayList<>(jarUrls),
                         new ArrayList<>(connectorJarIdentifiers));
 

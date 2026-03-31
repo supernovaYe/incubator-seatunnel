@@ -17,24 +17,22 @@
 
 package org.apache.seatunnel.connectors.seatunnel.cdc.mongodb;
 
-import org.apache.seatunnel.api.common.CommonOptions;
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.api.configuration.util.OptionRule;
+import org.apache.seatunnel.api.options.ConnectorCommonOptions;
 import org.apache.seatunnel.api.source.SeaTunnelSource;
 import org.apache.seatunnel.api.source.SourceSplit;
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.catalog.CatalogTableUtil;
 import org.apache.seatunnel.api.table.catalog.TableIdentifier;
 import org.apache.seatunnel.api.table.catalog.TablePath;
-import org.apache.seatunnel.api.table.catalog.schema.TableSchemaOptions;
 import org.apache.seatunnel.api.table.connector.TableSource;
 import org.apache.seatunnel.api.table.factory.Factory;
 import org.apache.seatunnel.api.table.factory.TableSourceFactory;
 import org.apache.seatunnel.api.table.factory.TableSourceFactoryContext;
 import org.apache.seatunnel.common.utils.SeaTunnelException;
-import org.apache.seatunnel.connectors.cdc.base.option.SourceOptions;
 import org.apache.seatunnel.connectors.cdc.base.option.StartupMode;
-import org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions;
+import org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbIncrementalSourceOptions;
 import org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.exception.MongodbConnectorException;
 
 import com.google.auto.service.AutoService;
@@ -56,27 +54,30 @@ public class MongodbIncrementalSourceFactory implements TableSourceFactory {
 
     @Override
     public OptionRule optionRule() {
-        return MongodbSourceOptions.getBaseRule()
+        return MongodbIncrementalSourceOptions.getBaseRule()
                 .required(
-                        MongodbSourceOptions.HOSTS,
-                        MongodbSourceOptions.DATABASE,
-                        MongodbSourceOptions.COLLECTION)
-                .exclusive(TableSchemaOptions.SCHEMA, TableSchemaOptions.TABLE_CONFIGS)
+                        MongodbIncrementalSourceOptions.HOSTS,
+                        MongodbIncrementalSourceOptions.DATABASE,
+                        MongodbIncrementalSourceOptions.COLLECTION)
+                .exclusive(
+                        MongodbIncrementalSourceOptions.SCHEMA,
+                        MongodbIncrementalSourceOptions.TABLE_CONFIGS)
                 .optional(
-                        MongodbSourceOptions.USERNAME,
-                        MongodbSourceOptions.PASSWORD,
-                        MongodbSourceOptions.CONNECTION_OPTIONS,
-                        MongodbSourceOptions.BATCH_SIZE,
-                        MongodbSourceOptions.POLL_MAX_BATCH_SIZE,
-                        MongodbSourceOptions.POLL_AWAIT_TIME_MILLIS,
-                        MongodbSourceOptions.HEARTBEAT_INTERVAL_MILLIS,
-                        MongodbSourceOptions.INCREMENTAL_SNAPSHOT_CHUNK_SIZE_MB,
-                        MongodbSourceOptions.STARTUP_MODE,
-                        MongodbSourceOptions.STOP_MODE)
+                        MongodbIncrementalSourceOptions.USERNAME,
+                        MongodbIncrementalSourceOptions.PASSWORD,
+                        MongodbIncrementalSourceOptions.CONNECTION_OPTIONS,
+                        MongodbIncrementalSourceOptions.BATCH_SIZE,
+                        MongodbIncrementalSourceOptions.POLL_MAX_BATCH_SIZE,
+                        MongodbIncrementalSourceOptions.POLL_AWAIT_TIME_MILLIS,
+                        MongodbIncrementalSourceOptions.HEARTBEAT_INTERVAL_MILLIS,
+                        MongodbIncrementalSourceOptions.INCREMENTAL_SNAPSHOT_CHUNK_SIZE_MB,
+                        MongodbIncrementalSourceOptions.STARTUP_MODE,
+                        MongodbIncrementalSourceOptions.STOP_MODE,
+                        MongodbIncrementalSourceOptions.DEBEZIUM_PROPERTIES)
                 .conditional(
-                        MongodbSourceOptions.STARTUP_MODE,
+                        MongodbIncrementalSourceOptions.STARTUP_MODE,
                         StartupMode.TIMESTAMP,
-                        SourceOptions.STARTUP_TIMESTAMP)
+                        MongodbIncrementalSourceOptions.STARTUP_TIMESTAMP)
                 .build();
     }
 
@@ -91,7 +92,8 @@ public class MongodbIncrementalSourceFactory implements TableSourceFactory {
             TableSource<T, SplitT, StateT> createSource(TableSourceFactoryContext context) {
         return () -> {
             List<CatalogTable> catalogTables = buildWithConfig(context.getOptions());
-            List<String> collections = context.getOptions().get(MongodbSourceOptions.COLLECTION);
+            List<String> collections =
+                    context.getOptions().get(MongodbIncrementalSourceOptions.COLLECTION);
             validateCatalogTablesAndCollections(catalogTables, collections);
             catalogTables = updateAndValidateCatalogTableId(catalogTables, collections);
             return (SeaTunnelSource<T, SplitT, StateT>)
@@ -134,8 +136,8 @@ public class MongodbIncrementalSourceFactory implements TableSourceFactory {
     }
 
     private List<CatalogTable> buildWithConfig(ReadonlyConfig config) {
-        String factoryId = config.get(CommonOptions.PLUGIN_NAME).replace("-CDC", "");
-        Map<String, Object> schemaMap = config.get(TableSchemaOptions.SCHEMA);
+        String factoryId = config.get(ConnectorCommonOptions.PLUGIN_NAME).replace("-CDC", "");
+        Map<String, Object> schemaMap = config.get(ConnectorCommonOptions.SCHEMA);
         if (schemaMap != null) {
             if (schemaMap.isEmpty()) {
                 throw new SeaTunnelException("Schema config can not be empty");
@@ -143,7 +145,7 @@ public class MongodbIncrementalSourceFactory implements TableSourceFactory {
             CatalogTable catalogTable = CatalogTableUtil.buildWithConfig(factoryId, config);
             return Collections.singletonList(catalogTable);
         }
-        List<Map<String, Object>> schemaMaps = config.get(TableSchemaOptions.TABLE_CONFIGS);
+        List<Map<String, Object>> schemaMaps = config.get(ConnectorCommonOptions.TABLE_CONFIGS);
         if (schemaMaps != null) {
             if (schemaMaps.isEmpty()) {
                 throw new SeaTunnelException("tables_configs can not be empty");

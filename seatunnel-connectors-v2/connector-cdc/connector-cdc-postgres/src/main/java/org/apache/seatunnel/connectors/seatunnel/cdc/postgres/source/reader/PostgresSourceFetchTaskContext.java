@@ -24,10 +24,7 @@ import org.apache.seatunnel.connectors.cdc.base.dialect.JdbcDataSourceDialect;
 import org.apache.seatunnel.connectors.cdc.base.relational.JdbcSourceEventDispatcher;
 import org.apache.seatunnel.connectors.cdc.base.source.offset.Offset;
 import org.apache.seatunnel.connectors.cdc.base.source.reader.external.JdbcSourceFetchTaskContext;
-import org.apache.seatunnel.connectors.cdc.base.source.split.IncrementalSplit;
-import org.apache.seatunnel.connectors.cdc.base.source.split.SnapshotSplit;
 import org.apache.seatunnel.connectors.cdc.base.source.split.SourceSplitBase;
-import org.apache.seatunnel.connectors.cdc.debezium.EmbeddedDatabaseHistory;
 import org.apache.seatunnel.connectors.seatunnel.cdc.postgres.config.PostgresSourceConfig;
 import org.apache.seatunnel.connectors.seatunnel.cdc.postgres.exception.PostgresConnectorErrorCode;
 import org.apache.seatunnel.connectors.seatunnel.cdc.postgres.source.offset.LsnOffset;
@@ -53,6 +50,8 @@ import io.debezium.connector.postgresql.connection.ReplicationConnection;
 import io.debezium.connector.postgresql.spi.SlotState;
 import io.debezium.connector.postgresql.spi.Snapshotter;
 import io.debezium.data.Envelope;
+import io.debezium.heartbeat.DefaultHeartbeatConnectionProvider;
+import io.debezium.heartbeat.HeartbeatFactory;
 import io.debezium.pipeline.DataChangeEvent;
 import io.debezium.pipeline.ErrorHandler;
 import io.debezium.pipeline.metrics.DefaultChangeEventSourceMetricsFactory;
@@ -68,10 +67,8 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.sql.SQLException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -129,7 +126,7 @@ public class PostgresSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
 
     @Override
     public void configure(SourceSplitBase sourceSplitBase) {
-        registerDatabaseHistory(sourceSplitBase);
+        super.registerDatabaseHistory(sourceSplitBase, dataConnection);
 
         // initial stateful objects
         final PostgresConnectorConfig connectorConfig = getDbzConnectorConfig();
@@ -188,7 +185,6 @@ public class PostgresSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
                 log.warn(
                         "unable to load info of replication slot, Debezium will try to create the slot");
             }
-
             if (offsetContext == null) {
                 log.info("No previous offset found");
                 // if we have no initial offset, indicate that to Snapshotter by passing null
@@ -215,7 +211,10 @@ public class PostgresSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
                         replicationConnection.createReplicationSlot().orElse(null);
                     } catch (SQLException ex) {
                         String message = "Creation of replication slot failed";
-                        if (ex.getMessage().contains("already exists")) {
+                        // PostgreSQL errors all have a 5-character SQLSTATE code, following the SQL
+                        // standard specification
+                        // https://www.postgresql.org/docs/current/errcodes-appendix.html
+                        if ("42710".equals(ex.getSQLState())) {
                             message +=
                                     "; when setting up multiple connectors for the same database host, please make sure to use a distinct replication slot name for each.";
                             log.warn(message);
@@ -253,6 +252,12 @@ public class PostgresSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
                             connectorConfig.getTableFilters().dataCollectionFilter(),
                             DataChangeEvent::new,
                             metadataProvider,
+                            new HeartbeatFactory<>(
+                                    connectorConfig,
+                                    topicSelector,
+                                    schemaNameAdjuster,
+                                    new DefaultHeartbeatConnectionProvider(dataConnection),
+                                    null),
                             schemaNameAdjuster);
 
             this.pgEventDispatcher =
@@ -264,6 +269,12 @@ public class PostgresSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
                             connectorConfig.getTableFilters().dataCollectionFilter(),
                             DataChangeEvent::new,
                             metadataProvider,
+                            new HeartbeatFactory<>(
+                                    connectorConfig,
+                                    topicSelector,
+                                    schemaNameAdjuster,
+                                    new DefaultHeartbeatConnectionProvider(dataConnection),
+                                    null),
                             schemaNameAdjuster);
 
             this.snapshotChangeEventSourceMetrics =
@@ -274,27 +285,6 @@ public class PostgresSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
         } finally {
             previousContext.restore();
         }
-    }
-
-    private void registerDatabaseHistory(SourceSplitBase sourceSplitBase) {
-        List<TableChanges.TableChange> engineHistory = new ArrayList<>();
-        // TODO: support save table schema
-        if (sourceSplitBase instanceof SnapshotSplit) {
-            SnapshotSplit snapshotSplit = (SnapshotSplit) sourceSplitBase;
-            engineHistory.add(
-                    dataSourceDialect.queryTableSchema(dataConnection, snapshotSplit.getTableId()));
-        } else {
-            IncrementalSplit incrementalSplit = (IncrementalSplit) sourceSplitBase;
-            for (TableId tableId : incrementalSplit.getTableIds()) {
-                engineHistory.add(dataSourceDialect.queryTableSchema(dataConnection, tableId));
-            }
-        }
-
-        EmbeddedDatabaseHistory.registerHistory(
-                sourceConfig
-                        .getDbzConfiguration()
-                        .getString(EmbeddedDatabaseHistory.DATABASE_HISTORY_INSTANCE_NAME),
-                engineHistory);
     }
 
     @Override

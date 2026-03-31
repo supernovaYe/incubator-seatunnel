@@ -20,6 +20,7 @@ package org.apache.seatunnel.engine.common.config;
 import org.apache.seatunnel.engine.common.config.server.CheckpointConfig;
 import org.apache.seatunnel.engine.common.config.server.ConnectorJarStorageConfig;
 import org.apache.seatunnel.engine.common.config.server.CoordinatorServiceConfig;
+import org.apache.seatunnel.engine.common.config.server.DataSourceConfig;
 import org.apache.seatunnel.engine.common.config.server.HttpConfig;
 import org.apache.seatunnel.engine.common.config.server.QueueType;
 import org.apache.seatunnel.engine.common.config.server.ScheduleStrategy;
@@ -41,35 +42,48 @@ import static com.hazelcast.internal.util.Preconditions.checkPositive;
 @Data
 public class EngineConfig {
 
-    private int backupCount = ServerConfigOptions.BACKUP_COUNT.defaultValue();
+    private int backupCount =
+            ServerConfigOptions.MasterServerConfigOptions.BACKUP_COUNT.defaultValue();
     private int printExecutionInfoInterval =
-            ServerConfigOptions.PRINT_EXECUTION_INFO_INTERVAL.defaultValue();
+            ServerConfigOptions.MasterServerConfigOptions.PRINT_EXECUTION_INFO_INTERVAL
+                    .defaultValue();
 
     private int printJobMetricsInfoInterval =
-            ServerConfigOptions.PRINT_JOB_METRICS_INFO_INTERVAL.defaultValue();
+            ServerConfigOptions.MasterServerConfigOptions.PRINT_JOB_METRICS_INFO_INTERVAL
+                    .defaultValue();
 
     private int jobMetricsBackupInterval =
-            ServerConfigOptions.JOB_METRICS_BACKUP_INTERVAL.defaultValue();
+            ServerConfigOptions.MasterServerConfigOptions.JOB_METRICS_BACKUP_INTERVAL
+                    .defaultValue();
+
+    private int jobMetricsPartitionCount =
+            ServerConfigOptions.MasterServerConfigOptions.JOB_METRICS_PARTITION_COUNT
+                    .defaultValue();
 
     private ThreadShareMode taskExecutionThreadShareMode =
-            ServerConfigOptions.TASK_EXECUTION_THREAD_SHARE_MODE.defaultValue();
+            ServerConfigOptions.WorkerServerConfigOptions.TASK_EXECUTION_THREAD_SHARE_MODE
+                    .defaultValue();
 
-    private SlotServiceConfig slotServiceConfig = ServerConfigOptions.SLOT_SERVICE.defaultValue();
+    private SlotServiceConfig slotServiceConfig =
+            ServerConfigOptions.WorkerServerConfigOptions.SLOT_SERVICE.defaultValue();
 
-    private CheckpointConfig checkpointConfig = ServerConfigOptions.CHECKPOINT.defaultValue();
+    private CheckpointConfig checkpointConfig =
+            ServerConfigOptions.MasterServerConfigOptions.CHECKPOINT.defaultValue();
 
     private CoordinatorServiceConfig coordinatorServiceConfig =
-            ServerConfigOptions.COORDINATOR_SERVICE.defaultValue();
+            ServerConfigOptions.MasterServerConfigOptions.COORDINATOR_SERVICE.defaultValue();
 
     private ConnectorJarStorageConfig connectorJarStorageConfig =
-            ServerConfigOptions.CONNECTOR_JAR_STORAGE_CONFIG.defaultValue();
+            ServerConfigOptions.MasterServerConfigOptions.CONNECTOR_JAR_STORAGE_CONFIG
+                    .defaultValue();
 
     private boolean classloaderCacheMode =
             ServerConfigOptions.CLASSLOADER_CACHE_MODE.defaultValue();
 
-    private QueueType queueType = ServerConfigOptions.QUEUE_TYPE.defaultValue();
+    private QueueType queueType =
+            ServerConfigOptions.WorkerServerConfigOptions.QUEUE_TYPE.defaultValue();
     private int historyJobExpireMinutes =
-            ServerConfigOptions.HISTORY_JOB_EXPIRE_MINUTES.defaultValue();
+            ServerConfigOptions.MasterServerConfigOptions.HISTORY_JOB_EXPIRE_MINUTES.defaultValue();
 
     private ClusterRole clusterRole = ClusterRole.MASTER_AND_WORKER;
 
@@ -81,9 +95,12 @@ public class EngineConfig {
     private TelemetryConfig telemetryConfig = ServerConfigOptions.TELEMETRY.defaultValue();
 
     private ScheduleStrategy scheduleStrategy =
-            ServerConfigOptions.JOB_SCHEDULE_STRATEGY.defaultValue();
+            ServerConfigOptions.MasterServerConfigOptions.JOB_SCHEDULE_STRATEGY.defaultValue();
 
-    private HttpConfig httpConfig = ServerConfigOptions.HTTP.defaultValue();
+    private HttpConfig httpConfig =
+            ServerConfigOptions.MasterServerConfigOptions.HTTP.defaultValue();
+
+    private DataSourceConfig dataSourceConfig = ServerConfigOptions.DATASOURCE.defaultValue();
 
     public void setBackupCount(int newBackupCount) {
         checkBackupCount(newBackupCount, 0);
@@ -97,22 +114,33 @@ public class EngineConfig {
     public void setPrintExecutionInfoInterval(int printExecutionInfoInterval) {
         checkPositive(
                 printExecutionInfoInterval,
-                ServerConfigOptions.PRINT_EXECUTION_INFO_INTERVAL + " must be > 0");
+                ServerConfigOptions.MasterServerConfigOptions.PRINT_EXECUTION_INFO_INTERVAL
+                        + " must be > 0");
         this.printExecutionInfoInterval = printExecutionInfoInterval;
     }
 
     public void setPrintJobMetricsInfoInterval(int printJobMetricsInfoInterval) {
         checkPositive(
                 printJobMetricsInfoInterval,
-                ServerConfigOptions.PRINT_JOB_METRICS_INFO_INTERVAL + " must be > 0");
+                ServerConfigOptions.MasterServerConfigOptions.PRINT_JOB_METRICS_INFO_INTERVAL
+                        + " must be > 0");
         this.printJobMetricsInfoInterval = printJobMetricsInfoInterval;
     }
 
     public void setJobMetricsBackupInterval(int jobMetricsBackupInterval) {
         checkPositive(
                 jobMetricsBackupInterval,
-                ServerConfigOptions.JOB_METRICS_BACKUP_INTERVAL + " must be > 0");
+                ServerConfigOptions.MasterServerConfigOptions.JOB_METRICS_BACKUP_INTERVAL
+                        + " must be > 0");
         this.jobMetricsBackupInterval = jobMetricsBackupInterval;
+    }
+
+    public void setJobMetricsPartitionCount(int jobMetricsPartitionCount) {
+        checkPositive(
+                jobMetricsPartitionCount,
+                ServerConfigOptions.MasterServerConfigOptions.JOB_METRICS_PARTITION_COUNT
+                        + " must be > 0");
+        this.jobMetricsPartitionCount = jobMetricsPartitionCount;
     }
 
     public void setTaskExecutionThreadShareMode(ThreadShareMode taskExecutionThreadShareMode) {
@@ -123,7 +151,8 @@ public class EngineConfig {
     public void setHistoryJobExpireMinutes(int historyJobExpireMinutes) {
         checkPositive(
                 historyJobExpireMinutes,
-                ServerConfigOptions.HISTORY_JOB_EXPIRE_MINUTES + " must be > 0");
+                ServerConfigOptions.MasterServerConfigOptions.HISTORY_JOB_EXPIRE_MINUTES
+                        + " must be > 0");
         this.historyJobExpireMinutes = historyJobExpireMinutes;
     }
 

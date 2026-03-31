@@ -17,6 +17,8 @@
 
 package org.apache.seatunnel.connectors.seatunnel.iceberg.source.reader;
 
+import org.apache.seatunnel.shade.org.apache.commons.lang3.tuple.Pair;
+
 import org.apache.seatunnel.api.source.Boundedness;
 import org.apache.seatunnel.api.source.Collector;
 import org.apache.seatunnel.api.source.SourceReader;
@@ -24,13 +26,12 @@ import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.catalog.TablePath;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
 import org.apache.seatunnel.connectors.seatunnel.iceberg.IcebergCatalogLoader;
-import org.apache.seatunnel.connectors.seatunnel.iceberg.config.SourceConfig;
+import org.apache.seatunnel.connectors.seatunnel.iceberg.config.IcebergSourceConfig;
 import org.apache.seatunnel.connectors.seatunnel.iceberg.config.SourceTableConfig;
 import org.apache.seatunnel.connectors.seatunnel.iceberg.data.DefaultDeserializer;
 import org.apache.seatunnel.connectors.seatunnel.iceberg.data.Deserializer;
 import org.apache.seatunnel.connectors.seatunnel.iceberg.source.split.IcebergFileScanTaskSplit;
 
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Catalog;
@@ -55,7 +56,7 @@ public class IcebergSourceReader implements SourceReader<SeaTunnelRow, IcebergFi
     private static final long POLL_WAIT_MS = 1000;
 
     private final Context context;
-    private final SourceConfig sourceConfig;
+    private final IcebergSourceConfig sourceConfig;
     private final Map<TablePath, CatalogTable> tables;
     private final Map<TablePath, Pair<Schema, Schema>> tableSchemaProjections;
     private final BlockingQueue<IcebergFileScanTaskSplit> pendingSplits;
@@ -68,7 +69,7 @@ public class IcebergSourceReader implements SourceReader<SeaTunnelRow, IcebergFi
 
     public IcebergSourceReader(
             @NonNull SourceReader.Context context,
-            @NonNull SourceConfig sourceConfig,
+            @NonNull IcebergSourceConfig sourceConfig,
             @NonNull Map<TablePath, CatalogTable> tables,
             @NonNull Map<TablePath, Pair<Schema, Schema>> tableSchemaProjections) {
         this.context = context;

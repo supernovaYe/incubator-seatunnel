@@ -17,12 +17,12 @@
 
 package org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils;
 
+import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
+
 import org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConfig;
 import org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.exception.MongodbConnectorException;
 import org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.internal.MongodbClientProvider;
 import org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.source.offset.ChangeStreamDescriptor;
-
-import org.apache.commons.lang3.StringUtils;
 
 import org.bson.BsonDocument;
 import org.bson.BsonInt32;
@@ -32,6 +32,7 @@ import org.bson.Document;
 import org.bson.conversions.Bson;
 
 import com.mongodb.ConnectionString;
+import com.mongodb.MongoCommandException;
 import com.mongodb.client.ChangeStreamIterable;
 import com.mongodb.client.MongoChangeStreamCursor;
 import com.mongodb.client.MongoClient;
@@ -49,9 +50,8 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.Locale;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 import static com.mongodb.client.model.Aggregates.match;
@@ -62,23 +62,28 @@ import static com.mongodb.client.model.Filters.regex;
 import static com.mongodb.client.model.Projections.include;
 import static com.mongodb.client.model.Sorts.ascending;
 import static org.apache.seatunnel.common.exception.CommonErrorCodeDeprecated.ILLEGAL_ARGUMENT;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.ADD_NS_FIELD_NAME;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.COMMAND_SUCCEED_FLAG;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.DOCUMENT_KEY;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.DROPPED_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.ID_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.MAX_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.MIN_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.NS_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.SHARD_FIELD;
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceOptions.UUID_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.ADD_NS_FIELD_NAME;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.CHANGE_STREAM_FATAL_ERROR;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.COMMAND_SUCCEED_FLAG;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.DOCUMENT_KEY;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.DOES_NOT_EXIST;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.DROPPED_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.ID_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.INVALID_CHANGE_STREAM_ERRORS;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.INVALID_RESUME_TOKEN;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.MAX_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.MIN_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.NOT_FOUND;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.NO_LONGER_IN_THE_OPLOG;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.NS_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.RESUME_TOKEN;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.SHARD_FIELD;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.config.MongodbSourceConstants.UUID_FIELD;
 import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.CollectionDiscoveryUtils.ADD_NS_FIELD;
 import static org.apache.seatunnel.connectors.seatunnel.cdc.mongodb.utils.CollectionDiscoveryUtils.includeListAsFlatPattern;
 
 @Slf4j
 public class MongodbUtils {
-
-    private static final Map<TableId, MongoCollection<?>> cache = new ConcurrentHashMap<>();
 
     public static ChangeStreamDescriptor getChangeStreamDescriptor(
             @Nonnull MongodbSourceConfig sourceConfig,
@@ -355,20 +360,13 @@ public class MongodbUtils {
     @SuppressWarnings("unchecked")
     public static <T> @Nonnull MongoCollection<T> getCollection(
             MongoClient mongoClient, TableId collectionId, Class<T> documentClass) {
-        MongoCollection<?> cachedCollection = cache.get(collectionId);
-        if (cachedCollection == null) {
-            MongoCollection<T> collection =
-                    mongoClient
-                            .getDatabase(collectionId.catalog())
-                            .getCollection(collectionId.table(), documentClass);
-            cache.put(collectionId, collection);
-            return collection;
-        }
-        return (MongoCollection<T>) cachedCollection;
+        return mongoClient
+                .getDatabase(collectionId.catalog())
+                .getCollection(collectionId.table(), documentClass);
     }
 
     public static MongoClient createMongoClient(MongodbSourceConfig sourceConfig) {
-        return MongodbClientProvider.INSTANCE.getOrCreateMongoClient(sourceConfig);
+        return MongodbClientProvider.INSTANCE.createMongoClient(sourceConfig);
     }
 
     public static @Nonnull ConnectionString buildConnectionString(
@@ -403,5 +401,26 @@ public class MongodbUtils {
         } catch (UnsupportedEncodingException e) {
             throw new MongodbConnectorException(ILLEGAL_ARGUMENT, e.getMessage());
         }
+    }
+
+    // Checks if given exception is caused by change stream cursor issues, including
+    // network connection failures, sharded cluster changes, or invalidate events.
+    // See: https://www.mongodb.com/docs/manual/changeStreams/ for more details.
+    public static boolean checkIfChangeStreamCursorExpires(final MongoCommandException e) {
+        return INVALID_CHANGE_STREAM_ERRORS.contains(e.getCode());
+    }
+
+    // This check is stricter than checkIfChangeStreamCursorExpires, which specifically
+    // checks if given exception is caused by an expired resume token.
+    public static boolean checkIfResumeTokenExpires(final MongoCommandException e) {
+        if (e.getCode() != CHANGE_STREAM_FATAL_ERROR) {
+            return false;
+        }
+        String errorMessage = e.getErrorMessage().toLowerCase(Locale.ROOT);
+        return (errorMessage.contains(RESUME_TOKEN))
+                && (errorMessage.contains(NOT_FOUND)
+                        || errorMessage.contains(DOES_NOT_EXIST)
+                        || errorMessage.contains(INVALID_RESUME_TOKEN)
+                        || errorMessage.contains(NO_LONGER_IN_THE_OPLOG));
     }
 }

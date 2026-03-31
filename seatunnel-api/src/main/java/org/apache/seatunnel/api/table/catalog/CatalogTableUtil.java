@@ -18,11 +18,11 @@
 package org.apache.seatunnel.api.table.catalog;
 
 import org.apache.seatunnel.shade.com.typesafe.config.Config;
+import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
 
-import org.apache.seatunnel.api.common.CommonOptions;
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
+import org.apache.seatunnel.api.options.ConnectorCommonOptions;
 import org.apache.seatunnel.api.table.catalog.schema.ReadonlyConfigParser;
-import org.apache.seatunnel.api.table.catalog.schema.TableSchemaOptions;
 import org.apache.seatunnel.api.table.factory.FactoryUtil;
 import org.apache.seatunnel.api.table.type.BasicType;
 import org.apache.seatunnel.api.table.type.MultipleRowType;
@@ -30,8 +30,6 @@ import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
 import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
 import org.apache.seatunnel.common.utils.SeaTunnelException;
-
-import org.apache.commons.lang3.StringUtils;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -94,7 +92,8 @@ public class CatalogTableUtil implements Serializable {
             ReadonlyConfig readonlyConfig, ClassLoader classLoader) {
 
         // We use plugin_name as factoryId, so MySQL-CDC should be MySQL
-        String factoryId = readonlyConfig.get(CommonOptions.PLUGIN_NAME).replace("-CDC", "");
+        String factoryId =
+                readonlyConfig.get(ConnectorCommonOptions.PLUGIN_NAME).replace("-CDC", "");
         return getCatalogTables(factoryId, readonlyConfig, classLoader);
     }
 
@@ -102,7 +101,7 @@ public class CatalogTableUtil implements Serializable {
     public static List<CatalogTable> getCatalogTables(
             String factoryId, ReadonlyConfig readonlyConfig, ClassLoader classLoader) {
         // Highest priority: specified schema
-        Map<String, Object> schemaMap = readonlyConfig.get(TableSchemaOptions.SCHEMA);
+        Map<String, Object> schemaMap = readonlyConfig.get(ConnectorCommonOptions.SCHEMA);
         if (schemaMap != null) {
             if (schemaMap.isEmpty()) {
                 throw new SeaTunnelException("Schema config can not be empty");
@@ -194,7 +193,7 @@ public class CatalogTableUtil implements Serializable {
     }
 
     public static CatalogTable buildWithConfig(String catalogName, ReadonlyConfig readonlyConfig) {
-        if (readonlyConfig.get(TableSchemaOptions.SCHEMA) == null) {
+        if (readonlyConfig.get(ConnectorCommonOptions.SCHEMA) == null) {
             throw new RuntimeException(
                     "Schema config need option [schema], please correct your config first");
         }
@@ -202,32 +201,34 @@ public class CatalogTableUtil implements Serializable {
 
         ReadonlyConfig schemaConfig =
                 readonlyConfig
-                        .getOptional(TableSchemaOptions.SCHEMA)
+                        .getOptional(ConnectorCommonOptions.SCHEMA)
                         .map(ReadonlyConfig::fromMap)
                         .orElseThrow(
                                 () -> new IllegalArgumentException("Schema config can't be null"));
 
         TablePath tablePath;
-        if (StringUtils.isNotEmpty(
-                schemaConfig.get(TableSchemaOptions.TableIdentifierOptions.TABLE))) {
+        if (StringUtils.isNotEmpty(schemaConfig.get(ConnectorCommonOptions.TABLE))) {
             tablePath =
                     TablePath.of(
-                            schemaConfig.get(TableSchemaOptions.TableIdentifierOptions.TABLE),
-                            schemaConfig.get(
-                                    TableSchemaOptions.TableIdentifierOptions.SCHEMA_FIRST));
+                            schemaConfig.get(ConnectorCommonOptions.TABLE),
+                            schemaConfig.get(ConnectorCommonOptions.SCHEMA_FIRST));
         } else {
             Optional<String> pluginOutputIdentifierOptional =
-                    readonlyConfig.getOptional(CommonOptions.PLUGIN_OUTPUT);
+                    readonlyConfig.getOptional(ConnectorCommonOptions.PLUGIN_OUTPUT);
             tablePath = pluginOutputIdentifierOptional.map(TablePath::of).orElse(TablePath.DEFAULT);
         }
+
+        List<String> partitionKeys =
+                schemaConfig
+                        .getOptional(ConnectorCommonOptions.PARTITION_KEYS)
+                        .orElseGet(Collections::emptyList);
 
         return CatalogTable.of(
                 TableIdentifier.of(catalogName, tablePath),
                 tableSchema,
                 new HashMap<>(),
-                // todo: add partitionKeys?
-                new ArrayList<>(),
-                readonlyConfig.get(TableSchemaOptions.TableIdentifierOptions.COMMENT));
+                partitionKeys,
+                readonlyConfig.get(ConnectorCommonOptions.TABLE_COMMENT));
     }
 
     public static SeaTunnelRowType buildSimpleTextSchema() {

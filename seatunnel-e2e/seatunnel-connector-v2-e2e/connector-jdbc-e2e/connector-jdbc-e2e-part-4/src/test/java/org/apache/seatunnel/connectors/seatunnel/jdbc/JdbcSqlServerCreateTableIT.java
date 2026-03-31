@@ -130,7 +130,7 @@ public class JdbcSqlServerCreateTableIT extends TestSuiteBase implements TestRes
     private static final String PG_GEOMETRY_JAR =
             "https://repo1.maven.org/maven2/net/postgis/postgis-geometry/2.5.1/postgis-geometry-2.5.1.jar";
 
-    private static final String MYSQL_IMAGE = "mysql:8.0";
+    private static final String MYSQL_IMAGE = "mysql:8.0.43";
     private static final String MYSQL_CONTAINER_HOST = "mysql-e2e";
     private static final String MYSQL_DATABASE = "auto";
 
@@ -282,10 +282,10 @@ public class JdbcSqlServerCreateTableIT extends TestSuiteBase implements TestRes
         TablePath tablePathPG = TablePath.of("pg", "public", "sqlserver_auto_create_pg");
 
         SqlServerCatalog sqlServerCatalog =
-                new SqlServerCatalog("sqlserver", "sa", password, sqlParse, "dbo");
-        MySqlCatalog mySqlCatalog = new MySqlCatalog("mysql", "root", PASSWORD, MysqlUrlInfo);
+                new SqlServerCatalog("sqlserver", "sa", password, sqlParse, "dbo", null);
+        MySqlCatalog mySqlCatalog = new MySqlCatalog("mysql", "root", PASSWORD, MysqlUrlInfo, null);
         PostgresCatalog postgresCatalog =
-                new PostgresCatalog("postgres", "testUser", PASSWORD, pg, "public");
+                new PostgresCatalog("postgres", "testUser", PASSWORD, pg, "public", null);
 
         mySqlCatalog.open();
         sqlServerCatalog.open();

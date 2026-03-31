@@ -19,7 +19,7 @@ package org.apache.seatunnel.core.starter.execution;
 
 import org.apache.seatunnel.shade.com.typesafe.config.Config;
 
-import org.apache.seatunnel.api.env.EnvCommonOptions;
+import org.apache.seatunnel.api.options.EnvCommonOptions;
 import org.apache.seatunnel.common.config.CheckResult;
 import org.apache.seatunnel.common.constants.JobMode;
 
@@ -61,13 +61,13 @@ public interface RuntimeEnvironment {
     }
 
     static boolean getEnableCheckpoint(Config config) {
-        boolean enableCheckpoint;
         Config envConfig = config.getConfig("env");
+        long checkpointInterval = -1;
         if (envConfig.hasPath(EnvCommonOptions.CHECKPOINT_INTERVAL.key())) {
-            enableCheckpoint = envConfig.getInt(EnvCommonOptions.CHECKPOINT_INTERVAL.key()) > 0;
-        } else {
-            enableCheckpoint = false;
+            checkpointInterval = envConfig.getLong(EnvCommonOptions.CHECKPOINT_INTERVAL.key());
+        } else if (envConfig.hasPath("execution.checkpoint.interval")) {
+            checkpointInterval = envConfig.getLong("execution.checkpoint.interval");
         }
-        return enableCheckpoint || getJobMode(config) == JobMode.STREAMING;
+        return checkpointInterval > 0 || getJobMode(config) == JobMode.STREAMING;
     }
 }

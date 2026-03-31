@@ -17,6 +17,8 @@
 
 package org.apache.seatunnel.connectors.seatunnel.jdbc.catalog.mysql;
 
+import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
+
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.catalog.Column;
 import org.apache.seatunnel.api.table.catalog.ConstraintKey;
@@ -30,7 +32,6 @@ import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.DatabaseI
 import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.mysql.MySqlTypeConverter;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.lang3.StringUtils;
 
 import com.mysql.cj.MysqlType;
 
@@ -179,12 +180,14 @@ public class MysqlCreateTableSqlBuilder {
         return String.join(", \n", columnSqls);
     }
 
-    private String buildColumnIdentifySql(
+    String buildColumnIdentifySql(
             Column column, String catalogName, Map<String, String> columnTypeMap) {
         final List<String> columnSqls = new ArrayList<>();
         columnSqls.add(CatalogUtils.quoteIdentifier(column.getName(), fieldIde, "`"));
         String type;
-        if ((SqlType.TIME.equals(column.getDataType().getSqlType())
+        if (column.getSinkType() != null) {
+            type = column.getSinkType();
+        } else if ((SqlType.TIME.equals(column.getDataType().getSqlType())
                         || SqlType.TIMESTAMP.equals(column.getDataType().getSqlType()))
                 && column.getScale() != null) {
             BasicTypeDefine<MysqlType> typeDefine = typeConverter.reconvert(column);

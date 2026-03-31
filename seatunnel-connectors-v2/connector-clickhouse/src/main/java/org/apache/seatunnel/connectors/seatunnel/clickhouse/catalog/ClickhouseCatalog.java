@@ -18,6 +18,7 @@
 package org.apache.seatunnel.connectors.seatunnel.clickhouse.catalog;
 
 import org.apache.seatunnel.shade.com.google.common.base.Preconditions;
+import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
 
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.api.table.catalog.Catalog;
@@ -34,13 +35,11 @@ import org.apache.seatunnel.api.table.catalog.exception.DatabaseAlreadyExistExce
 import org.apache.seatunnel.api.table.catalog.exception.DatabaseNotExistException;
 import org.apache.seatunnel.api.table.catalog.exception.TableAlreadyExistException;
 import org.apache.seatunnel.api.table.catalog.exception.TableNotExistException;
-import org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig;
+import org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseSinkOptions;
 import org.apache.seatunnel.connectors.seatunnel.clickhouse.util.ClickhouseCatalogUtil;
 import org.apache.seatunnel.connectors.seatunnel.clickhouse.util.ClickhouseProxy;
 import org.apache.seatunnel.connectors.seatunnel.clickhouse.util.ClickhouseUtil;
 import org.apache.seatunnel.connectors.seatunnel.clickhouse.util.TypeConvertUtil;
-
-import org.apache.commons.lang3.StringUtils;
 
 import com.clickhouse.client.ClickHouseColumn;
 import com.clickhouse.client.ClickHouseNode;
@@ -54,11 +53,11 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.ExecutionException;
 
-import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig.CLICKHOUSE_CONFIG;
-import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig.HOST;
-import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig.PASSWORD;
-import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig.SAVE_MODE_CREATE_TEMPLATE;
-import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig.USERNAME;
+import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseBaseOptions.CLICKHOUSE_CONFIG;
+import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseBaseOptions.HOST;
+import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseBaseOptions.PASSWORD;
+import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseBaseOptions.USERNAME;
+import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseSinkOptions.SAVE_MODE_CREATE_TEMPLATE;
 import static org.apache.seatunnel.shade.com.google.common.base.Preconditions.checkArgument;
 
 @Slf4j
@@ -101,6 +100,9 @@ public class ClickhouseCatalog implements Catalog {
         List<ClickHouseColumn> clickHouseColumns =
                 proxy.getClickHouseColumns(tablePath.getFullNameWithQuoted());
 
+        // Get source type mapping from DESC query
+        Map<String, String> sourceTypeMap =
+                proxy.getClickhouseTableSchema(tablePath.getFullNameWithQuoted());
         try {
             Optional<PrimaryKey> primaryKey =
                     proxy.getPrimaryKey(tablePath.getDatabaseName(), tablePath.getTableName());
@@ -119,7 +121,9 @@ public class ClickhouseCatalog implements Catalog {
                                     column.getScale(),
                                     column.isNullable(),
                                     null,
-                                    null));
+                                    null,
+                                    null,
+                                    sourceTypeMap.get(column.getColumnName())));
 
             TableIdentifier tableIdentifier =
                     TableIdentifier.of(
@@ -254,7 +258,7 @@ public class ClickhouseCatalog implements Catalog {
                             tablePath.getTableName(),
                             catalogTable.get().getTableSchema(),
                             catalogTable.get().getComment(),
-                            ClickhouseConfig.SAVE_MODE_CREATE_TEMPLATE.key()));
+                            ClickhouseSinkOptions.SAVE_MODE_CREATE_TEMPLATE.key()));
         } else if (actionType == ActionType.DROP_TABLE) {
             return new SQLPreviewResult(
                     ClickhouseCatalogUtil.INSTANCE.getDropTableSql(tablePath, true));

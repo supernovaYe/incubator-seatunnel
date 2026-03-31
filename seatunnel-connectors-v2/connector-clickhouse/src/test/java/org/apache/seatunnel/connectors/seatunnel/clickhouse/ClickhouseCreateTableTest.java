@@ -17,6 +17,8 @@
 
 package org.apache.seatunnel.connectors.seatunnel.clickhouse;
 
+import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
+
 import org.apache.seatunnel.api.sink.SaveModePlaceHolder;
 import org.apache.seatunnel.api.table.catalog.Column;
 import org.apache.seatunnel.api.table.catalog.ConstraintKey;
@@ -29,10 +31,8 @@ import org.apache.seatunnel.api.table.type.DecimalType;
 import org.apache.seatunnel.api.table.type.LocalTimeType;
 import org.apache.seatunnel.common.exception.CommonError;
 import org.apache.seatunnel.common.exception.SeaTunnelRuntimeException;
-import org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig;
+import org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseSinkOptions;
 import org.apache.seatunnel.connectors.seatunnel.clickhouse.util.ClickhouseCatalogUtil;
-
-import org.apache.commons.lang3.StringUtils;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -98,15 +98,17 @@ public class ClickhouseCreateTableTest {
                                 .columns(columns)
                                 .build(),
                         "clickhouse test table",
-                        ClickhouseConfig.SAVE_MODE_CREATE_TEMPLATE.key());
+                        ClickhouseSinkOptions.SAVE_MODE_CREATE_TEMPLATE.key());
+        // Primary key columns (id, age) should NOT be wrapped in Nullable
+        // because ClickHouse does not allow nullable columns in ORDER BY / PRIMARY KEY
         Assertions.assertEquals(
                 createTableSql,
                 "CREATE TABLE IF NOT EXISTS  `test1`.`test2` (\n"
                         + "    `id` Int64 ,`age` Int32 COMMENT 'test comment',\n"
-                        + "    `name` String ,\n"
-                        + "`score` Int32 COMMENT '''N''-N',\n"
-                        + "`gender` Int8 ,\n"
-                        + "`create_time` Int64 \n"
+                        + "    `name` Nullable(String) ,\n"
+                        + "`score` Nullable(Int32) COMMENT '\''N''-N',\n"
+                        + "`gender` Nullable(Int8) ,\n"
+                        + "`create_time` Nullable(Int64) \n"
                         + ") ENGINE = MergeTree()\n"
                         + "ORDER BY (`id`,`age`)\n"
                         + "PRIMARY KEY (`id`,`age`)\n"
@@ -114,7 +116,7 @@ public class ClickhouseCreateTableTest {
                         + "    index_granularity = 8192;");
         System.out.println(createTableSql);
 
-        String createTemplate = ClickhouseConfig.SAVE_MODE_CREATE_TEMPLATE.defaultValue();
+        String createTemplate = ClickhouseSinkOptions.SAVE_MODE_CREATE_TEMPLATE.defaultValue();
         TableSchema tableSchema =
                 TableSchema.builder()
                         .primaryKey(PrimaryKey.of(StringUtils.EMPTY, Collections.emptyList()))
@@ -132,7 +134,7 @@ public class ClickhouseCreateTableTest {
                                         "test2",
                                         tableSchema,
                                         "clickhouse test table",
-                                        ClickhouseConfig.SAVE_MODE_CREATE_TEMPLATE.key()));
+                                        ClickhouseSinkOptions.SAVE_MODE_CREATE_TEMPLATE.key()));
 
         String primaryKeyHolder = SaveModePlaceHolder.ROWTYPE_PRIMARY_KEY.getPlaceHolder();
         SeaTunnelRuntimeException exceptSeaTunnelRuntimeException =
@@ -141,7 +143,7 @@ public class ClickhouseCreateTableTest {
                         SaveModePlaceHolder.getDisplay(primaryKeyHolder),
                         createTemplate,
                         primaryKeyHolder,
-                        ClickhouseConfig.SAVE_MODE_CREATE_TEMPLATE.key());
+                        ClickhouseSinkOptions.SAVE_MODE_CREATE_TEMPLATE.key());
         Assertions.assertEquals(
                 exceptSeaTunnelRuntimeException.getMessage(),
                 actualSeaTunnelRuntimeException.getMessage());
@@ -228,7 +230,7 @@ public class ClickhouseCreateTableTest {
                                 .columns(columns)
                                 .build(),
                         "clickhouse test table",
-                        ClickhouseConfig.SAVE_MODE_CREATE_TEMPLATE.key());
+                        ClickhouseSinkOptions.SAVE_MODE_CREATE_TEMPLATE.key());
         String expected =
                 "CREATE TABLE IF NOT EXISTS `tpch`.`lineitem` (\n"
                         + "`L_COMMITDATE` Date ,\n"
@@ -333,7 +335,7 @@ public class ClickhouseCreateTableTest {
                                 .columns(columns)
                                 .build(),
                         "clickhouse test table",
-                        ClickhouseConfig.SAVE_MODE_CREATE_TEMPLATE.key());
+                        ClickhouseSinkOptions.SAVE_MODE_CREATE_TEMPLATE.key());
         String expected =
                 "CREATE TABLE IF NOT EXISTS `tpch`.`lineitem` (\n"
                         + "`L_ORDERKEY` Int32 ,`L_LINENUMBER` Int32 ,\n"

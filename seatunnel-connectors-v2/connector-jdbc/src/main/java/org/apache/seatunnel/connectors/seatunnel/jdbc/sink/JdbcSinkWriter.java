@@ -17,6 +17,8 @@
 
 package org.apache.seatunnel.connectors.seatunnel.jdbc.sink;
 
+import org.apache.seatunnel.shade.com.zaxxer.hikari.HikariDataSource;
+
 import org.apache.seatunnel.api.sink.MultiTableResourceManager;
 import org.apache.seatunnel.api.table.catalog.TablePath;
 import org.apache.seatunnel.api.table.catalog.TableSchema;
@@ -27,11 +29,12 @@ import org.apache.seatunnel.connectors.seatunnel.jdbc.exception.JdbcConnectorErr
 import org.apache.seatunnel.connectors.seatunnel.jdbc.exception.JdbcConnectorException;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.JdbcOutputFormatBuilder;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.connection.SimpleJdbcConnectionPoolProviderProxy;
+import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.DatabaseIdentifier;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.JdbcDialect;
+import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.dsql.DdsqlJdbcConnectionPoolProviderProxy;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.state.JdbcSinkState;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.state.XidInfo;
 
-import com.zaxxer.hikari.HikariDataSource;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
@@ -75,12 +78,16 @@ public class JdbcSinkWriter extends AbstractJdbcSinkWriter<ConnectionPoolManager
         HikariDataSource ds = new HikariDataSource();
         try {
             Class.forName(jdbcSinkConfig.getJdbcConnectionConfig().getDriverName());
-        } catch (ClassNotFoundException e) {
-            throw new RuntimeException(e);
+        } catch (Exception e) {
+            log.warn(
+                    "Failed to load JDBC driver {}",
+                    jdbcSinkConfig.getJdbcConnectionConfig().getDriverName(),
+                    e);
         }
         ds.setIdleTimeout(30 * 1000);
         ds.setMaximumPoolSize(queueSize);
         ds.setJdbcUrl(jdbcSinkConfig.getJdbcConnectionConfig().getUrl());
+        ds.setDriverClassName(jdbcSinkConfig.getJdbcConnectionConfig().getDriverName());
         if (jdbcSinkConfig.getJdbcConnectionConfig().getUsername().isPresent()) {
             ds.setUsername(jdbcSinkConfig.getJdbcConnectionConfig().getUsername().get());
         }
@@ -88,6 +95,7 @@ public class JdbcSinkWriter extends AbstractJdbcSinkWriter<ConnectionPoolManager
             ds.setPassword(jdbcSinkConfig.getJdbcConnectionConfig().getPassword().get());
         }
         ds.setAutoCommit(jdbcSinkConfig.getJdbcConnectionConfig().isAutoCommit());
+        jdbcSinkConfig.getJdbcConnectionConfig().getProperties().forEach(ds::addDataSourceProperty);
         return new JdbcMultiTableResourceManager(new ConnectionPoolManager(ds));
     }
 
@@ -96,11 +104,17 @@ public class JdbcSinkWriter extends AbstractJdbcSinkWriter<ConnectionPoolManager
             MultiTableResourceManager<ConnectionPoolManager> multiTableResourceManager,
             int queueIndex) {
         connectionProvider.closeConnection();
-        this.connectionProvider =
-                new SimpleJdbcConnectionPoolProviderProxy(
-                        multiTableResourceManager.getSharedResource().get(),
-                        jdbcSinkConfig.getJdbcConnectionConfig(),
-                        queueIndex);
+        if (this.dialect.dialectName().equals(DatabaseIdentifier.DSQL)) {
+            this.connectionProvider =
+                    new DdsqlJdbcConnectionPoolProviderProxy(
+                            jdbcSinkConfig.getJdbcConnectionConfig(), queueIndex);
+        } else {
+            this.connectionProvider =
+                    new SimpleJdbcConnectionPoolProviderProxy(
+                            multiTableResourceManager.getSharedResource().get(),
+                            jdbcSinkConfig.getJdbcConnectionConfig(),
+                            queueIndex);
+        }
         this.outputFormat =
                 new JdbcOutputFormatBuilder(
                                 dialect,
@@ -130,6 +144,10 @@ public class JdbcSinkWriter extends AbstractJdbcSinkWriter<ConnectionPoolManager
 
     @Override
     public void write(SeaTunnelRow element) throws IOException {
+        if (element.getArity() == 0) {
+            return;
+        }
+
         tryOpen();
         outputFormat.writeRecord(element);
     }

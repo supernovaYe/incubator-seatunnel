@@ -82,6 +82,12 @@ public abstract class Column implements Serializable {
      */
     protected final String sourceType;
 
+    /**
+     * The data type used to store the target database, typically specified in transform or sink
+     * scenarios.
+     */
+    protected String sinkType;
+
     /** your options * */
     protected final Map<String, Object> options;
 
@@ -103,6 +109,34 @@ public abstract class Column implements Serializable {
             Object defaultValue,
             String comment) {
         this(name, dataType, columnLength, null, nullable, defaultValue, comment, null, null);
+    }
+
+    protected Column(
+            String name,
+            SeaTunnelDataType<?> dataType,
+            Long columnLength,
+            Integer scale,
+            boolean nullable,
+            Object defaultValue,
+            String comment,
+            String sinkType,
+            String sourceType,
+            Map<String, Object> options) {
+        this.name = name;
+        this.dataType = dataType;
+        this.columnLength = columnLength;
+        this.scale = scale;
+        this.nullable = nullable;
+        this.defaultValue = defaultValue;
+        this.comment = comment;
+        this.sourceType = sourceType;
+        this.sinkType = sinkType;
+        this.options = options;
+
+        this.bitLen = columnLength != null ? columnLength * 8 : 0;
+        this.longColumnLength = columnLength;
+        this.isUnsigned = false;
+        this.isZeroFill = false;
     }
 
     protected Column(

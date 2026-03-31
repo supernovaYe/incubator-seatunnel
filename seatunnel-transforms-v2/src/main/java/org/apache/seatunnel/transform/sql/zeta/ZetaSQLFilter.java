@@ -17,11 +17,11 @@
 
 package org.apache.seatunnel.transform.sql.zeta;
 
+import org.apache.seatunnel.shade.org.apache.commons.lang3.tuple.Pair;
+
 import org.apache.seatunnel.api.table.type.BasicType;
 import org.apache.seatunnel.common.exception.CommonErrorCodeDeprecated;
 import org.apache.seatunnel.transform.exception.TransformException;
-
-import org.apache.commons.lang3.tuple.Pair;
 
 import net.sf.jsqlparser.expression.Expression;
 import net.sf.jsqlparser.expression.Function;
@@ -39,6 +39,7 @@ import net.sf.jsqlparser.expression.operators.relational.MinorThan;
 import net.sf.jsqlparser.expression.operators.relational.MinorThanEquals;
 import net.sf.jsqlparser.expression.operators.relational.NotEqualsTo;
 import net.sf.jsqlparser.expression.operators.relational.ParenthesedExpressionList;
+import net.sf.jsqlparser.schema.Column;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -113,6 +114,9 @@ public class ZetaSQLFilter {
         }
         if (whereExpr instanceof Parenthesis) {
             return parenthesisExpr((Parenthesis) whereExpr, inputFields);
+        }
+        if (whereExpr instanceof Column) {
+            return (boolean) zetaSQLFunction.computeForValue(whereExpr, inputFields);
         }
         throw new TransformException(
                 CommonErrorCodeDeprecated.UNSUPPORTED_OPERATION,

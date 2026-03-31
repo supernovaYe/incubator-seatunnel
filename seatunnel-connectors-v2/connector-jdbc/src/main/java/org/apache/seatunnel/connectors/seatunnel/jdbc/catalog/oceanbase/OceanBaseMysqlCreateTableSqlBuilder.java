@@ -17,6 +17,8 @@
 
 package org.apache.seatunnel.connectors.seatunnel.jdbc.catalog.oceanbase;
 
+import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
+
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.catalog.Column;
 import org.apache.seatunnel.api.table.catalog.ConstraintKey;
@@ -31,7 +33,6 @@ import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.oceanbase
 import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.oceanbase.OceanBaseMysqlType;
 
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -184,7 +185,9 @@ public class OceanBaseMysqlCreateTableSqlBuilder {
         final List<String> columnSqls = new ArrayList<>();
         columnSqls.add(CatalogUtils.quoteIdentifier(column.getName(), fieldIde, "`"));
         String type;
-        if ((SqlType.TIME.equals(column.getDataType().getSqlType())
+        if (column.getSinkType() != null) {
+            type = column.getSinkType();
+        } else if ((SqlType.TIME.equals(column.getDataType().getSqlType())
                         || SqlType.TIMESTAMP.equals(column.getDataType().getSqlType()))
                 && column.getScale() != null) {
             BasicTypeDefine<OceanBaseMysqlType> typeDefine = typeConverter.reconvert(column);
@@ -265,6 +268,12 @@ public class OceanBaseMysqlCreateTableSqlBuilder {
                 keyName = "FOREIGN KEY";
                 // todo:
                 break;
+            case VECTOR_INDEX_KEY:
+                keyName = "VECTOR INDEX";
+                return String.format(
+                                "%s `%s` (%s)",
+                                keyName, constraintKey.getConstraintName(), indexColumns)
+                        + " WITH (distance=L2, type=hnsw)";
             default:
                 throw new UnsupportedOperationException(
                         "Unsupported constraint type: " + constraintType);

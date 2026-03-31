@@ -20,12 +20,13 @@ package org.apache.seatunnel.core.starter.flink.execution;
 import org.apache.seatunnel.shade.com.google.common.collect.Lists;
 import org.apache.seatunnel.shade.com.typesafe.config.Config;
 
-import org.apache.seatunnel.api.common.CommonOptions;
 import org.apache.seatunnel.api.common.JobContext;
 import org.apache.seatunnel.api.common.PluginIdentifier;
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
+import org.apache.seatunnel.api.options.EnvCommonOptions;
 import org.apache.seatunnel.api.source.SeaTunnelSource;
 import org.apache.seatunnel.api.source.SourceSplit;
+import org.apache.seatunnel.api.source.SupportSchemaEvolution;
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.factory.FactoryUtil;
 import org.apache.seatunnel.api.table.factory.TableSourceFactory;
@@ -35,13 +36,15 @@ import org.apache.seatunnel.common.constants.PluginType;
 import org.apache.seatunnel.core.starter.execution.SourceTableInfo;
 import org.apache.seatunnel.plugin.discovery.seatunnel.SeaTunnelFactoryDiscovery;
 import org.apache.seatunnel.plugin.discovery.seatunnel.SeaTunnelSourcePluginDiscovery;
+import org.apache.seatunnel.translation.flink.schema.SchemaOperator;
 import org.apache.seatunnel.translation.flink.source.FlinkSource;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
-import lombok.extern.slf4j.Slf4j;
 import scala.Tuple2;
 
 import java.io.Serializable;
@@ -52,11 +55,11 @@ import java.util.List;
 import java.util.Set;
 import java.util.function.Function;
 
-import static org.apache.seatunnel.api.common.CommonOptions.PLUGIN_NAME;
-import static org.apache.seatunnel.api.common.CommonOptions.PLUGIN_OUTPUT;
+import static org.apache.seatunnel.api.options.ConnectorCommonOptions.PLUGIN_NAME;
+import static org.apache.seatunnel.api.options.ConnectorCommonOptions.PLUGIN_OUTPUT;
 import static org.apache.seatunnel.api.table.factory.FactoryUtil.ensureJobModeMatch;
+import static org.apache.seatunnel.common.constants.JobMode.STREAMING;
 
-@Slf4j
 @SuppressWarnings("unchecked,rawtypes")
 public class SourceExecuteProcessor extends FlinkAbstractPluginExecuteProcessor<SourceTableInfo> {
 
@@ -85,15 +88,53 @@ public class SourceExecuteProcessor extends FlinkAbstractPluginExecuteProcessor<
                             WatermarkStrategy.noWatermarks(),
                             String.format("%s-Source", internalSource.getPluginName()));
 
-            if (pluginConfig.hasPath(CommonOptions.PARALLELISM.key())) {
-                int parallelism = pluginConfig.getInt(CommonOptions.PARALLELISM.key());
+            if (pluginConfig.hasPath(EnvCommonOptions.PARALLELISM.key())) {
+                int parallelism = pluginConfig.getInt(EnvCommonOptions.PARALLELISM.key());
                 sourceStream.setParallelism(parallelism);
             }
-            sources.add(
-                    new DataStreamTableInfo(
-                            sourceStream,
-                            sourceTableInfo.getCatalogTables(),
-                            ReadonlyConfig.fromConfig(pluginConfig).get(PLUGIN_OUTPUT)));
+
+            boolean isStreaming =
+                    envConfig.hasPath("job.mode")
+                            && STREAMING
+                                    .toString()
+                                    .equalsIgnoreCase(envConfig.getString("job.mode"));
+
+            boolean enableSchemaChange = false;
+            for (Config cfg : pluginConfigs) {
+                if (cfg.hasPath("schema-changes.enabled")
+                        && cfg.getBoolean("schema-changes.enabled")) {
+                    enableSchemaChange = true;
+                    break;
+                }
+            }
+            // add schema evolution functionality to cdc source
+            DataStream<SeaTunnelRow> evolvedStream = null;
+            if (isStreaming
+                    && enableSchemaChange
+                    && sourceTableInfo.getSource() instanceof SupportSchemaEvolution) {
+                evolvedStream =
+                        sourceStream.transform(
+                                "schema-evolution",
+                                TypeInformation.of(SeaTunnelRow.class),
+                                new SchemaOperator(
+                                        jobContext.getJobId(),
+                                        (SupportSchemaEvolution) sourceTableInfo.getSource(),
+                                        pluginConfig));
+            }
+
+            if (evolvedStream != null) {
+                sources.add(
+                        new DataStreamTableInfo(
+                                evolvedStream,
+                                sourceTableInfo.getCatalogTables(),
+                                ReadonlyConfig.fromConfig(pluginConfig).get(PLUGIN_OUTPUT)));
+            } else {
+                sources.add(
+                        new DataStreamTableInfo(
+                                sourceStream,
+                                sourceTableInfo.getCatalogTables(),
+                                ReadonlyConfig.fromConfig(pluginConfig).get(PLUGIN_OUTPUT)));
+            }
         }
         return sources;
     }
@@ -117,7 +158,8 @@ public class SourceExecuteProcessor extends FlinkAbstractPluginExecuteProcessor<
                             PluginType.SOURCE.getType(),
                             sourceConfig.getString(PLUGIN_NAME.key()));
             jars.addAll(
-                    sourcePluginDiscovery.getPluginJarPaths(Lists.newArrayList(pluginIdentifier)));
+                    sourcePluginDiscovery.getPluginJarAndDependencyPaths(
+                            Lists.newArrayList(pluginIdentifier)));
 
             Tuple2<SeaTunnelSource<Object, SourceSplit, Serializable>, List<CatalogTable>> source =
                     FactoryUtil.createAndPrepareSource(
@@ -128,7 +170,8 @@ public class SourceExecuteProcessor extends FlinkAbstractPluginExecuteProcessor<
                             (TableSourceFactory)
                                     factoryDiscovery
                                             .createOptionalPluginInstance(pluginIdentifier)
-                                            .orElse(null));
+                                            .orElse(null),
+                            envConfig == null ? null : ReadonlyConfig.fromConfig(envConfig));
 
             source._1().setJobContext(jobContext);
             ensureJobModeMatch(jobContext, source._1());

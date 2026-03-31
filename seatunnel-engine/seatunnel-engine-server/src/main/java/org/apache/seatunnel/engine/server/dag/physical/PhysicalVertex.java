@@ -162,30 +162,16 @@ public class PhysicalVertex {
         this.currExecutionState = (ExecutionState) runningJobStateIMap.get(taskGroupLocation);
 
         this.nodeEngine = nodeEngine;
-        if (log.isDebugEnabled() || log.isTraceEnabled()) {
-            this.taskFullName =
-                    String.format(
-                            "Job %s (%s), Pipeline: [(%d/%d)], task: [%s (%d/%d)], taskGroupLocation: [%s]",
-                            jobImmutableInformation.getJobConfig().getName(),
-                            jobImmutableInformation.getJobId(),
-                            pipelineId,
-                            totalPipelineNum,
-                            taskGroup.getTaskGroupName(),
-                            subTaskGroupIndex + 1,
-                            parallelism,
-                            taskGroupLocation);
-        } else {
-            this.taskFullName =
-                    String.format(
-                            "Job %s (%s), Pipeline: [(%d/%d)], task: [%s (%d/%d)]",
-                            jobImmutableInformation.getJobConfig().getName(),
-                            jobImmutableInformation.getJobId(),
-                            pipelineId,
-                            totalPipelineNum,
-                            taskGroup.getTaskGroupName(),
-                            subTaskGroupIndex + 1,
-                            parallelism);
-        }
+        this.taskFullName =
+                String.format(
+                        "Job (%s), Pipeline: [(%d/%d)], task: [%s (%d/%d)], taskGroupLocation: [%s]",
+                        jobImmutableInformation.getJobId(),
+                        pipelineId,
+                        totalPipelineNum,
+                        taskGroup.getTaskGroupName(),
+                        subTaskGroupIndex + 1,
+                        parallelism,
+                        taskGroupLocation);
 
         this.taskFuture = new CompletableFuture<>();
 
@@ -252,9 +238,10 @@ public class PhysicalVertex {
             try {
                 return (Boolean) invoke.get();
             } catch (InterruptedException | ExecutionException e) {
-                log.warn(
-                        "Execution of CheckTaskGroupIsExecutingOperation {} failed, checkTaskGroupIsExecuting return false. ",
-                        taskGroupLocation,
+                log.error(
+                        String.format(
+                                "Execution of CheckTaskGroupIsExecutingOperation %s failed, checkTaskGroupIsExecuting return false. ",
+                                taskGroupLocation),
                         e);
             }
         }
@@ -528,6 +515,17 @@ public class PhysicalVertex {
         }
         errorByPhysicalVertex.compareAndSet(null, taskExecutionState.getThrowableMsg());
         updateTaskState(taskExecutionState.getExecutionState());
+    }
+
+    public synchronized void forceStop() {
+        ExecutionState executionState = getExecutionState();
+        if (executionState == null || executionState.isEndState()) {
+            return;
+        }
+        noticeTaskExecutionServiceCancel();
+        if (!taskFuture.isDone()) {
+            updateTaskState(ExecutionState.CANCELED);
+        }
     }
 
     public Address getCurrentExecutionAddress() {
